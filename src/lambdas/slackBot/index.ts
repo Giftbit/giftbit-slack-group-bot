@@ -35,7 +35,7 @@ const actionDescriptions:  { [key: string]: string } = {
     "approve <request_id>": "Approves a request to join a group"
 };
 
-export default function (message: Message, ctx: awslambda.Context, callback: awslambda.Callback): void {
+export function handler (message: Message, ctx: awslambda.Context, callback: awslambda.Callback): void {
     debug && console.log("event", JSON.stringify(message, null, 2));
     handleMessage(message, ctx)
         .then(res => {
