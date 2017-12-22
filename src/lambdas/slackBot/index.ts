@@ -8,6 +8,9 @@ import {request} from "http";
 const debug = true;
 const token = "exFqXxSpTJftVbmpjUUQz3TJ";
 
+const APPROVERS = process.env.APPROVERS;
+const ACCOUNTS: { [accountName: string]: string } = process.env.ACCOUNTS;
+
 const usersTableName = "giftbit-slack-bot-users";
 const requestTableName = "giftbit-slack-bot-requests";
 const membershipDurationMinutes = 60;
@@ -28,7 +31,7 @@ const handlers: { [ key: string]: ActionHandler} = {
 };
 
 const actionDescriptions:  { [key: string]: string } = {
-    list: "Lists the groups that can be requested",
+    "list": "Lists the groups that can be requested",
     "register <username>": "Registers your AWS Username so we can add it to groups",
     "whoami": "Displays your registered AWS IAM username",
     "request <group_name>": "Creates a request to be added to a group temporarily",
@@ -229,7 +232,8 @@ async function approveHandler(words: string[], message: Message): Promise<any> {
         };
     }
 
-    if (getApprovers().indexOf(message.user_name) < 0) {
+    const approvers = getApprovers();
+    if (approvers.length > 0 && approvers.indexOf(message.user_name) < 0) {
         return {
             text: "I did not recognize `" + message.user_name + "` in the list of approvers."
         };
@@ -294,7 +298,7 @@ async function registerUserName(userId: string, userName: string): Promise<any> 
 }
 
 function getApprovers(): string[] {
-    return process.env.APPROVERS.trim().split(" ").filter((x: string) => x);
+    return APPROVERS.trim().split(" ").filter((x: string) => x);
 }
 
 function getDevGroups(): string[] {

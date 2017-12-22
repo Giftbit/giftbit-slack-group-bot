@@ -1,0 +1,58 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Account Specific Resources for the Group Bot
+
+Parameters:
+  GroupBotProject:
+    Type: String
+    Description: The Group Bot Project Name. This will prefix the component functions.
+  GroupBotSlackHandlerAccount:
+    Type: String
+    Description: The Account ID that contains the Group Bot Slack Handler
+
+Resources:
+  GroupListerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Code: ../dist/groupLister/groupLister.zip
+      FunctionName: !Sub "${GroupBotProject}-GroupLister"
+      Handler: index.handler
+      Runtime: nodejs6.10
+      Timeout: 30
+      Role: !GetAtt GroupListerRole.Arn
+  GroupListerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          -
+            Effect: Allow
+            Action:
+              - sts:AssumeRole
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+#      Policies:
+#        -
+#          PolicyName: GroupListerAccess
+#          PolicyDocument:
+#            Version: 2012-10-17
+#            Statement:
+#              -
+#                Effect: Allow
+#                Action:
+#                  - s3:PutObject
+#                  - s3:GetObject
+#                  - s3:ListBucket
+#                  - s3:DeleteObject
+#                Resource:
+#                  - !Sub "arn:aws:s3:::${S3DataStore}"
+#                  - !Sub "arn:aws:s3:::${S3DataStore}/*"
+  SlackBotGroupListerInvokeAccess:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt GroupListerFunction.Arn
+      Principal: !Sub "arn:aws:iam::${GroupBotSlackHandlerAccount}:role/${GroupBotProject}-SlackBotRole"

@@ -1,6 +1,13 @@
 AWSTemplateFormatVersion: 2010-09-09
 Description: Deployment of the SlackBot
-Transform: AWS::Serverless-2016-10-31
+
+Parameters:
+  GroupBotProject:
+    Type: String
+    Description: The Group Bot Project Name. This will prefix the component functions.
+  Accounts:
+    Type: String
+    Description: JSON Object of Account Name to Account ID Pairs
 
 Resources:
   S3DataStore:
@@ -13,9 +20,13 @@ Resources:
       Runtime: nodejs6.10
       Timeout: 30
       Role: !GetAtt SlackBotRole.Arn
+      Environment:
+        Variables:
+          ACCOUNTS: !Ref Accounts
   SlackBotRole:
     Type: AWS::IAM::Role
     Properties:
+      RoleName: !Sub "${GroupBotProject}-SlackBotRole"
       AssumeRolePolicyDocument:
         Version: 2012-10-17
         Statement:
@@ -45,15 +56,18 @@ Resources:
                   - !Sub "arn:aws:s3:::${S3DataStore}"
                   - !Sub "arn:aws:s3:::${S3DataStore}/*"
   RestApi:
-    Type: 'AWS::ApiGateway::RestApi'
+    Type: AWS::ApiGateway::RestApi
     Properties:
       Body:
         info:
-          version: '1.0'
+          version: 1.0
           title: !Ref 'AWS::StackName'
         paths:
           /webhook:
             post:
+              responses:
+                "200":
+                  description: 200 response
               x-amazon-apigateway-integration:
                 httpMethod: POST
                 type: aws
@@ -117,16 +131,23 @@ Resources:
                      "$util.urlDecode($kvTokenised[0])" : #if($kvTokenised[1].length() > 0)"$util.urlDecode($kvTokenised[1])"#{else}""#end#if( $foreach.hasNext ),#end
                     #end
                     }
-        swagger: '2.0'
+        swagger: 2.0
   SlackBotFunctionRestApiPermission:
-    Type: 'AWS::Lambda::Permission'
+    Type: AWS::Lambda::Permission
     Properties:
-      Action: 'lambda:invokeFunction'
+      Action: lambda:invokeFunction
       Principal: apigateway.amazonaws.com
       FunctionName: !Ref SlackBotFunction
-      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${RestApi}/Prod/POST/webhook"
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${RestApi}/*/*/*"
   Deployment:
     Type: AWS::ApiGateway::Deployment
     Properties:
       RestApiId: !Ref RestApi
       StageName: Prod
+  AccountDependencies:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: ./account-res.yaml
+      Parameters:
+        GroupBotProject: !Ref GroupBotProject
+        GroupBotSlackHandlerAccount: !Ref AWS::AccountId

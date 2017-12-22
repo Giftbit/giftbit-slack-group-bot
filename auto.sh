@@ -11,8 +11,8 @@ STACK_NAME="SlackGroupBot"
 BUILD_ARTIFACT_BUCKET="dev-lightraildevartifacts-ywjp7wt8djk7-bucket-1mlnqtwvk2jzf"
 
 # Parameter values for the sam template.  see: `aws cloudformation deploy help`
-PARAMETER_OVERRIDES=""
-#PARAMETER_OVERRIDES="--parameter-overrides KeyOne=value KeyTwo=value"
+#PARAMETER_OVERRIDES=""
+PARAMETER_OVERRIDES="--parameter-overrides GroupBotProject=Groot"
 
 USAGE="usage: $0 <command name>\nvalid command names: build delete deploy invoke upload"
 
@@ -66,7 +66,7 @@ elif [ "$COMMAND" = "deploy" ]; then
     aws cloudformation package --template-file infrastructure/$TEMPLATE.yaml --s3-bucket $BUILD_ARTIFACT_BUCKET --output-template-file "$OUTPUT_TEMPLATE_FILE"
 
     echo "Executing aws cloudformation deploy..."
-    aws cloudformation deploy --template-file "$OUTPUT_TEMPLATE_FILE" --stack-name $STACK_NAME --capabilities CAPABILITY_IAM $PARAMETER_OVERRIDES
+    aws cloudformation deploy --template-file "$OUTPUT_TEMPLATE_FILE" --stack-name $STACK_NAME --capabilities CAPABILITY_NAMED_IAM $PARAMETER_OVERRIDES
 
     # cleanup
     rm "$OUTPUT_TEMPLATE_FILE"
