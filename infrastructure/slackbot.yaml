@@ -23,6 +23,8 @@ Resources:
       Environment:
         Variables:
           ACCOUNTS: !Ref Accounts
+          GROUP_BOT_PROJECT: !Ref GroupBotProject
+          REGION: !Ref AWS::Region
   SlackBotRole:
     Type: AWS::IAM::Role
     Properties:

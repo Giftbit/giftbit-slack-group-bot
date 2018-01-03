@@ -3,19 +3,20 @@ import * as awslambda from "aws-lambda";
 import * as aws from "aws-sdk";
 import * as uuid from "node-uuid";
 import {Message} from "./Message";
-import {request} from "http";
 
 const debug = true;
 const token = "exFqXxSpTJftVbmpjUUQz3TJ";
 
-const APPROVERS = process.env.APPROVERS;
-const ACCOUNTS: { [accountName: string]: string } = process.env.ACCOUNTS;
+const GROUP_BOT_PROJECT = process.env.GROUP_BOT_PROJECT;
+const APPROVERS: string = process.env.APPROVERS;
+const ACCOUNTS: { [accountName: string]: string } = JSON.parse(process.env.ACCOUNTS);
+const REGION = process.env.REGION;
 
 const usersTableName = "giftbit-slack-bot-users";
 const requestTableName = "giftbit-slack-bot-requests";
 const membershipDurationMinutes = 60;
 
-type ActionHandler = (words: string[], message: Message) => Promise<any>;
+type ActionHandler = (words: string[], message: Message, triggerWord: string) => Promise<any>;
 
 let iam = new aws.IAM();
 let dynamo = new aws.DynamoDB();
@@ -74,20 +75,20 @@ async function handleMessage(message: Message, ctx: awslambda.Context): Promise<
 
     if (!action) {
         return {
-            text: "Yes? How can I help you? If you're not sure what to do, try `groot help`"
+            text: `Yes? How can I help you? If you're not sure what to do, try \`${triggerWord} help\``
         };
     }
 
     debug && console.log("Requested handler: ", action);
     if (!(action in handlers)) {
         return {
-            text: "Sorry, I don't understand `" + action + "`. Try `groot help` to find out what I do know."
+            text: `Sorry, I don't understand \`${action}\`. Try \`${triggerWord} help\` to find out what I do know.`
         };
     }
 
     debug && console.log("Delegating to:", action, "Words: ", words, "Message: ", message);
     try {
-        return handlers[action](words, message);
+        return handlers[action](words, message, triggerWord);
     }
     catch (err) {
         return {
@@ -97,7 +98,7 @@ async function handleMessage(message: Message, ctx: awslambda.Context): Promise<
 
 }
 
-async function helpHandler(words: string[], message: Message): Promise<any> {
+async function helpHandler(words: string[], message: Message, triggerWord): Promise<any> {
     let responseLines: string[] = [];
 
     if (Object.keys(actionDescriptions).length) {
@@ -105,7 +106,7 @@ async function helpHandler(words: string[], message: Message): Promise<any> {
     }
 
     for (let action in actionDescriptions) {
-        responseLines.push("`groot " + action + "`: " + actionDescriptions[action]);
+        responseLines.push(`\`${triggerWord} ${action}\`: ${actionDescriptions[action]}`);
     }
 
     return {
@@ -116,24 +117,31 @@ async function helpHandler(words: string[], message: Message): Promise<any> {
 async function listHandler(words: string[], message: Message): Promise<any> {
     let responseLines: string[] = [];
 
-    let devGroups = getDevGroups();
-    if (devGroups.length > 0) {
-        responseLines.push("Development AWS Groups:");
-        devGroups.map((group) => {
-            responseLines.push("`" + group + "`");
-        });
-    }
+    for (let account of Object.keys(ACCOUNTS)) {
+        let accountId = ACCOUNTS[account];
 
-    if (responseLines.length > 0) {
-        responseLines.push("");
-    }
+        let invocationResponse: aws.Lambda.Types.InvocationResponse = await lambda.invoke({
+            FunctionName: `arn:aws:lambda:${REGION}:${accountId}:function:${GROUP_BOT_PROJECT}-GroupLister`,
+            InvocationType: "RequestResponse"
+        }).promise();
 
-    let prodGroups = getProdGroups();
-    if (prodGroups.length > 0) {
-        responseLines.push("Production AWS Groups:");
-        prodGroups.map((group: string) => {
-            responseLines.push("`" + group + "`");
-        });
+        debug &&  console.log(`GroupLister Response for ${account}: ${accountId}`, invocationResponse);
+
+        if (invocationResponse.FunctionError) {
+            debug && console.log(`An Error occurred in listing the groups for ${account} from account ${accountId}`);
+        }
+        else {
+            let result = JSON.parse(invocationResponse.Payload.toString());
+
+            if (result.groups.length > 0) {
+                responseLines.push(`${account}:`);
+                let groups = result.groups.map(group => `- ${group}`);
+
+                debug && console.log("Groups",groups);
+
+                responseLines = responseLines.concat(groups);
+            }
+        }
     }
 
     return {
@@ -141,11 +149,11 @@ async function listHandler(words: string[], message: Message): Promise<any> {
     };
 }
 
-async function registerHandler(words: string[], message: Message): Promise<any> {
+async function registerHandler(words: string[], message: Message, triggerWord: string): Promise<any> {
     if (words.length < 1) {
         let helpText = [
             "You can register your AWS Username by typing",
-            "`groot register <username>`.",
+            `\`${triggerWord} register <username>\`.`,
             "For your convenience, you can get both of these",
             "values from your terminal using:",
             "`aws iam get-user --query User.[UserName] --output text`"
