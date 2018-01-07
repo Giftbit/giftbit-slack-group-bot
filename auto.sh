@@ -12,7 +12,7 @@ BUILD_ARTIFACT_BUCKET="dev-lightraildevartifacts-ywjp7wt8djk7-bucket-1mlnqtwvk2j
 
 # Parameter values for the sam template.  see: `aws cloudformation deploy help`
 #PARAMETER_OVERRIDES=""
-PARAMETER_OVERRIDES='--parameter-overrides GroupBotProject=Groot Accounts={"Dev":"757264843183"}'
+PARAMETER_OVERRIDES='--parameter-overrides GroupBotProject=Groot Accounts={"Dev":"757264843183"} SlackToken=Jsy6HbHkV3ph7VQjuebXOQEA'
 
 USAGE="usage: $0 <command name>\nvalid command names: build delete deploy invoke upload"
 

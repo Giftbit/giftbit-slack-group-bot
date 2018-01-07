@@ -50,4 +50,4 @@ Resources:
     Properties:
       Action: lambda:InvokeFunction
       FunctionName: !GetAtt GroupListerFunction.Arn
-      Principal: !Sub "arn:aws:iam::${GroupBotSlackHandlerAccount}:role/${GroupBotProject}-SlackBotRole"
+      Principal: !Sub "arn:aws:iam::${GroupBotSlackHandlerAccount}:role/${GroupBotProject}-SlackBotBackgroundRole"

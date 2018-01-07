@@ -8,10 +8,48 @@ Parameters:
   Accounts:
     Type: String
     Description: JSON Object of Account Name to Account ID Pairs
+  SlackToken:
+    Type: String
+    Description: The Slack Token that should be used to authenticate incoming requests
+    NoEcho: true
 
 Resources:
   S3DataStore:
     Type: AWS::S3::Bucket
+  SlackBotBackgroundFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Code: ../dist/slackBotBackground/slackBotBackground.zip
+      Handler: index.handler
+      Runtime: nodejs6.10
+      Timeout: 30
+      Role: !GetAtt SlackBotBackgroundRole.Arn
+      Environment:
+        Variables:
+          GROUP_BOT_PROJECT: !Ref GroupBotProject
+          REGION: !Ref AWS::Region
+  SlackBotBackgroundRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${GroupBotProject}-SlackBotBackgroundRole"
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          -
+            Effect: Allow
+            Action:
+              - sts:AssumeRole
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+  SlackBotGroupListerInvokeAccess:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt SlackBotBackgroundFunction.Arn
+      Principal: !GetAtt SlackBotRole.Arn
   SlackBotFunction:
     Type: AWS::Lambda::Function
     Properties:
@@ -23,8 +61,10 @@ Resources:
       Environment:
         Variables:
           ACCOUNTS: !Ref Accounts
+          TOKEN: !Ref SlackToken
           GROUP_BOT_PROJECT: !Ref GroupBotProject
           REGION: !Ref AWS::Region
+          SLACK_BOT_BACKGROUND_TASK_LAMBDA_ARN: !GetAtt SlackBotBackgroundFunction.Arn
   SlackBotRole:
     Type: AWS::IAM::Role
     Properties:

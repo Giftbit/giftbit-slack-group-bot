@@ -3,6 +3,7 @@ import * as awslambda from "aws-lambda";
 import * as aws from "aws-sdk";
 import {GetGroupsResponse} from "./GroupListerEvent";
 
+const debug = true;
 let iam = new aws.IAM();
 
 const GROUP_BOT_GROUP_PREFIX = "/groupbot/";
@@ -20,6 +21,7 @@ export function handler(event: any, context: awslambda.Context, callback: awslam
 
 async function handlerAsync(event: any, context: awslambda.Context): Promise<GetGroupsResponse> {
     const listGroupsResponse: aws.IAM.Types.ListGroupsResponse = await iam.listGroups({PathPrefix: GROUP_BOT_GROUP_PREFIX}).promise();
+    debug && console.log("ListGroupsResponse",listGroupsResponse);
 
     const accountGroups = listGroupsResponse.Groups.map((group) => group.GroupName);
 

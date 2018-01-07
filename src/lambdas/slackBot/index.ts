@@ -2,21 +2,24 @@ import "babel-polyfill";
 import * as awslambda from "aws-lambda";
 import * as aws from "aws-sdk";
 import * as uuid from "node-uuid";
+import {sendResponse} from "../slackBotBackground/Responder";
 import {Message} from "./Message";
+import {ListGroupsTask} from "../slackBotBackground/Task";
 
 const debug = true;
-const token = "exFqXxSpTJftVbmpjUUQz3TJ";
 
 const GROUP_BOT_PROJECT = process.env.GROUP_BOT_PROJECT;
-const APPROVERS: string = process.env.APPROVERS;
-const ACCOUNTS: { [accountName: string]: string } = JSON.parse(process.env.ACCOUNTS);
 const REGION = process.env.REGION;
+const ACCOUNTS: { [accountName: string]: string } = JSON.parse(process.env.ACCOUNTS);
+const TOKEN = process.env.TOKEN;
+const APPROVERS: string = process.env.APPROVERS;
+const SLACK_BOT_BACKGROUND_TASK_LAMBDA_ARN = process.env.SLACK_BOT_BACKGROUND_TASK_LAMBDA_ARN;
 
 const usersTableName = "giftbit-slack-bot-users";
 const requestTableName = "giftbit-slack-bot-requests";
 const membershipDurationMinutes = 60;
 
-type ActionHandler = (words: string[], message: Message, triggerWord: string) => Promise<any>;
+type ActionHandler = (words: string[], message: Message) => Promise<any>;
 
 let iam = new aws.IAM();
 let dynamo = new aws.DynamoDB();
@@ -51,7 +54,7 @@ export function handler (message: Message, ctx: awslambda.Context, callback: aws
 }
 
 async function handleMessage(message: Message, ctx: awslambda.Context): Promise<any> {
-    if (message.token !== token) {
+    if (message.token !== TOKEN) {
         return {
             code: "NotFound",
             message: "The requested resource was not found"
@@ -61,44 +64,37 @@ async function handleMessage(message: Message, ctx: awslambda.Context): Promise<
     let rawWords = message.text.replace(/\s+/g, " ");
     console.log("rawWords:", rawWords);
     let words = rawWords.split(" ");
-    let triggerWord = words.shift();
+    let triggerWord = message.command;
 
     debug && console.log("Words:", words, "Trigger Word:", triggerWord);
 
-    let action: string = null;
-    if (triggerWord === message.trigger_word) {
-        action = words.shift();
-    }
-    else {
-        action = triggerWord;
-    }
+    const action = words.shift();
 
     if (!action) {
         return {
-            text: `Yes? How can I help you? If you're not sure what to do, try \`${triggerWord} help\``
+            text: `How can I help you? If you're not sure what to do, try \`${message.command} help\``
         };
     }
 
     debug && console.log("Requested handler: ", action);
     if (!(action in handlers)) {
         return {
-            text: `Sorry, I don't understand \`${action}\`. Try \`${triggerWord} help\` to find out what I do know.`
+            text: `Sorry, I don't understand \`${action}\`. Try \`${message.command} help\` to find out what I do know.`
         };
     }
 
     debug && console.log("Delegating to:", action, "Words: ", words, "Message: ", message);
     try {
-        return handlers[action](words, message, triggerWord);
+        return handlers[action](words, message);
     }
     catch (err) {
         return {
             text: "An unexpected error occurred: " + err.message
         };
     }
-
 }
 
-async function helpHandler(words: string[], message: Message, triggerWord): Promise<any> {
+async function helpHandler(words: string[], message: Message): Promise<any> {
     let responseLines: string[] = [];
 
     if (Object.keys(actionDescriptions).length) {
@@ -106,7 +102,7 @@ async function helpHandler(words: string[], message: Message, triggerWord): Prom
     }
 
     for (let action in actionDescriptions) {
-        responseLines.push(`\`${triggerWord} ${action}\`: ${actionDescriptions[action]}`);
+        responseLines.push(`\`${message.command} ${action}\`: ${actionDescriptions[action]}`);
     }
 
     return {
@@ -115,45 +111,26 @@ async function helpHandler(words: string[], message: Message, triggerWord): Prom
 }
 
 async function listHandler(words: string[], message: Message): Promise<any> {
-    let responseLines: string[] = [];
-
-    for (let account of Object.keys(ACCOUNTS)) {
-        let accountId = ACCOUNTS[account];
-
-        let invocationResponse: aws.Lambda.Types.InvocationResponse = await lambda.invoke({
-            FunctionName: `arn:aws:lambda:${REGION}:${accountId}:function:${GROUP_BOT_PROJECT}-GroupLister`,
-            InvocationType: "RequestResponse"
-        }).promise();
-
-        debug &&  console.log(`GroupLister Response for ${account}: ${accountId}`, invocationResponse);
-
-        if (invocationResponse.FunctionError) {
-            debug && console.log(`An Error occurred in listing the groups for ${account} from account ${accountId}`);
-        }
-        else {
-            let result = JSON.parse(invocationResponse.Payload.toString());
-
-            if (result.groups.length > 0) {
-                responseLines.push(`${account}:`);
-                let groups = result.groups.map(group => `- ${group}`);
-
-                debug && console.log("Groups",groups);
-
-                responseLines = responseLines.concat(groups);
-            }
-        }
-    }
-
-    return {
-        text: responseLines.join("\n")
+    const listGroupsTask = {
+        command: "listGroups",
+        accounts: ACCOUNTS,
+        responseUrl: message.response_url
     };
+
+    lambda.invoke({
+        FunctionName: SLACK_BOT_BACKGROUND_TASK_LAMBDA_ARN,
+        InvocationType: "Event",
+        Payload: JSON.stringify(listGroupsTask)
+    }).promise();
+
+    return {text:"Gathering Available Groups..."};
 }
 
-async function registerHandler(words: string[], message: Message, triggerWord: string): Promise<any> {
+async function registerHandler(words: string[], message: Message): Promise<any> {
     if (words.length < 1) {
         let helpText = [
             "You can register your AWS Username by typing",
-            `\`${triggerWord} register <username>\`.`,
+            `\`${message.command} register <username>\`.`,
             "For your convenience, you can get both of these",
             "values from your terminal using:",
             "`aws iam get-user --query User.[UserName] --output text`"
