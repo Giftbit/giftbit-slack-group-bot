@@ -36,7 +36,7 @@ const handlers: { [ key: string]: ActionHandler} = {
 
 const actionDescriptions:  { [key: string]: string } = {
     "list": "Lists the groups that can be requested",
-    "register <username>": "Registers your AWS Username so we can add it to groups",
+    "register <account> <username>": "Registers your AWS Username for an account so we can add it to groups",
     "whoami": "Displays your registered AWS IAM username",
     "request <group_name>": "Creates a request to be added to a group temporarily",
     "approve <request_id>": "Approves a request to join a group"
@@ -111,7 +111,7 @@ async function helpHandler(words: string[], message: Message): Promise<any> {
 }
 
 async function listHandler(words: string[], message: Message): Promise<any> {
-    const listGroupsTask = {
+    const listGroupsTask: ListGroupsTask = {
         command: "listGroups",
         accounts: ACCOUNTS,
         responseUrl: message.response_url
@@ -127,13 +127,13 @@ async function listHandler(words: string[], message: Message): Promise<any> {
 }
 
 async function registerHandler(words: string[], message: Message): Promise<any> {
-    if (words.length < 1) {
+    if (words.length < 2) {
         let helpText = [
-            "You can register your AWS Username by typing",
-            `\`${message.command} register <username>\`.`,
-            "For your convenience, you can get both of these",
-            "values from your terminal using:",
-            "`aws iam get-user --query User.[UserName] --output text`"
+            "This command requires an <account> and <username>.",
+            "",
+            "For your convenience, you can get your username",
+            "from your terminal using:",
+            "`aws sts get-caller-identity --query Arn --output text | awk -F'/' '{print $2}'`"
         ];
         return {
             text: helpText.join("\n")

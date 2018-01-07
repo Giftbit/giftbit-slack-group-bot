@@ -65,7 +65,7 @@ async function listGroupsHandler(task: ListGroupsTask) {
                 responseLines.push("");
             }
             if (getGroupsResponse.groups.length > 0) {
-                responseLines.push(`${accountGroupsRequest.accountName}:`);
+                responseLines.push(`*${accountGroupsRequest.accountName}*:`);
                 const groupNames = getGroupsResponse.groups.map(groupName => `- ${groupName}`)
                 responseLines.push(...groupNames);
             }

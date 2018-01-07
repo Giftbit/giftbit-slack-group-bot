@@ -7,6 +7,6 @@ export interface CallbackTask {
 }
 
 export interface ListGroupsTask extends CallbackTask {
-    command: "ListGroups"
+    command: "listGroups"
     accounts: { [accountName: string]: string }
 }
