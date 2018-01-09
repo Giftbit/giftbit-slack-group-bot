@@ -2,18 +2,20 @@ import "babel-polyfill";
 import * as awslambda from "aws-lambda";
 import * as aws from "aws-sdk";
 import * as uuid from "node-uuid";
-import {sendResponse} from "../slackBotBackground/Responder";
 import {Message} from "./Message";
-import {ListGroupsTask} from "../slackBotBackground/Task";
+import {
+    ListGroupsTask, CreateRegistrationVerificationTask,
+    CompleteRegistrationVerificationTask, ShowUserAccountsTask,
+} from "../slackBotBackground/Task";
 
 const debug = true;
 
-const GROUP_BOT_PROJECT = process.env.GROUP_BOT_PROJECT;
-const REGION = process.env.REGION;
+const ACCOUNT_ID =  process.env.ACCOUNT_ID;
 const ACCOUNTS: { [accountName: string]: string } = JSON.parse(process.env.ACCOUNTS);
 const TOKEN = process.env.TOKEN;
 const APPROVERS: string = process.env.APPROVERS;
 const SLACK_BOT_BACKGROUND_TASK_LAMBDA_ARN = process.env.SLACK_BOT_BACKGROUND_TASK_LAMBDA_ARN;
+const DATA_STORE_BUCKET = process.env.DATA_STORE_BUCKET;
 
 const usersTableName = "giftbit-slack-bot-users";
 const requestTableName = "giftbit-slack-bot-requests";
@@ -21,7 +23,6 @@ const membershipDurationMinutes = 60;
 
 type ActionHandler = (words: string[], message: Message) => Promise<any>;
 
-let iam = new aws.IAM();
 let dynamo = new aws.DynamoDB();
 let lambda = new aws.Lambda();
 
@@ -29,6 +30,7 @@ const handlers: { [ key: string]: ActionHandler} = {
     help: helpHandler,
     list: listHandler,
     register: registerHandler,
+    verify: verifyHandler,
     whoami: whoamiHandler,
     request: requestHandler,
     approve: approveHandler
@@ -36,7 +38,8 @@ const handlers: { [ key: string]: ActionHandler} = {
 
 const actionDescriptions:  { [key: string]: string } = {
     "list": "Lists the groups that can be requested",
-    "register <account> <username>": "Registers your AWS Username for an account so we can add it to groups",
+    "register <username> <account>": "Registers your AWS Username for an account so we can add it to groups",
+    "verify <token>": "Verifies the AWS Account you registered",
     "whoami": "Displays your registered AWS IAM username",
     "request <group_name>": "Creates a request to be added to a group temporarily",
     "approve <request_id>": "Approves a request to join a group"
@@ -127,54 +130,106 @@ async function listHandler(words: string[], message: Message): Promise<any> {
 }
 
 async function registerHandler(words: string[], message: Message): Promise<any> {
+    const accountNames = Object.keys(ACCOUNTS).map(accountName => `*${accountName}*`).join(", ");
+    const connectorWord = Object.keys(ACCOUNTS).length == 1 ? "is" : "are";
+
     if (words.length < 2) {
-        let helpText = [
-            "This command requires an <account> and <username>.",
+        const helpText = [
+            "This command requires an \<username\> and \<account\>.",
             "",
             "For your convenience, you can get your username",
             "from your terminal using:",
-            "`aws sts get-caller-identity --query Arn --output text | awk -F'/' '{print $2}'`"
+            "`aws sts get-caller-identity --query Arn --output text | awk -F'/' '{print $2}'`",
+            `and known accounts ${connectorWord} ${accountNames}`
         ];
         return {
             text: helpText.join("\n")
         };
     }
 
-    let username = words.shift();
-    let userResponse: aws.IAM.Types.GetUserResponse;
-    try {
-        userResponse = await iam.getUser({UserName: username}).promise();
-    }
-    catch (err) {
+    const username = words.shift();
+    const account = words.shift();
+
+    if (!(account in ACCOUNTS)) {
+        const accounts = Object.keys(ACCOUNTS).map(accountName => `*${accountName}*`).join(", ");
+
+        const helpText = [
+            `The account '${account}' was not recognized`,
+            "",
+            `The known accounts ${connectorWord} ${accountNames}`
+        ];
         return {
-            text: "We couldn't find a user by the name `" + username + "`"
-        };
+            text: helpText.join("\n")
+        }
+    }
+    const accountId = ACCOUNTS[account];
+
+    const createRegistrationVerificationTask: CreateRegistrationVerificationTask = {
+        command: "createRegistrationVerification",
+        accountId: accountId,
+        slackUserId: message.user_id,
+        triggerWord: message.command,
+        username: username,
+        responseUrl: message.response_url
+    };
+
+    lambda.invoke({
+        FunctionName: SLACK_BOT_BACKGROUND_TASK_LAMBDA_ARN,
+        InvocationType: "Event",
+        Payload: JSON.stringify(createRegistrationVerificationTask)
+    }).promise();
+
+    const response = [
+        "Generating registration verification..."
+    ];
+    return {
+        text: response.join("\n")
+    }
+}
+
+async function verifyHandler(words: string[], message: Message): Promise<any> {
+    if (words.length !== 1) {
+        return {
+            text: "Verification requires a verification token, which was not provided"
+        }
     }
 
-    console.log("user: ", userResponse);
+    const token = words.shift();
+    const completeRegistrationVerificationTask: CompleteRegistrationVerificationTask = {
+        command: "completeRegistrationVerification",
+        token: token,
+        slackUserId: message.user_id,
+        responseUrl: message.response_url
+    };
 
-    if (userResponse.User && userResponse.User.UserName === username) {
-        await registerUserName(message.user_id, username);
+    lambda.invoke({
+        FunctionName: SLACK_BOT_BACKGROUND_TASK_LAMBDA_ARN,
+        InvocationType: "Event",
+        Payload: JSON.stringify(completeRegistrationVerificationTask)
+    }).promise();
 
-        return {
-            text: "`" + message.user_name + "` has successfully been registered as `" + username + "`"
-        };
+    return {
+        text: "Verifying registration..."
     }
 }
 
 async function whoamiHandler(words: string[], message: Message): Promise<any> {
-    let awsUserName = await getRegisteredUserName(message.user_id);
+    const showUserAccountsTask: ShowUserAccountsTask = {
+        command: "showUserAccounts",
+        slackUserId: message.user_id,
+        accounts: ACCOUNTS,
+        responseUrl: message.response_url
+    };
 
-    if (awsUserName) {
-        return {
-            text: "You're registered as `" + awsUserName + "`"
-        };
-    }
-    else {
-        return {
-            text: "We couldn't find a user registered for you. Try `register <aws_user_name>`"
-        };
-    }
+    lambda.invoke({
+        FunctionName: SLACK_BOT_BACKGROUND_TASK_LAMBDA_ARN,
+        InvocationType: "Event",
+        Payload: JSON.stringify(showUserAccountsTask)
+    }).promise();
+
+    return {
+        text: "Gathering Account Information..."
+    };
 }
 
 async function requestHandler(words: string[], message: Message): Promise<any> {

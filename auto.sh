@@ -12,7 +12,7 @@ BUILD_ARTIFACT_BUCKET="dev-lightraildevartifacts-ywjp7wt8djk7-bucket-1mlnqtwvk2j
 
 # Parameter values for the sam template.  see: `aws cloudformation deploy help`
 #PARAMETER_OVERRIDES=""
-PARAMETER_OVERRIDES='--parameter-overrides GroupBotProject=Groot Accounts={"Dev":"757264843183"} SlackToken=Jsy6HbHkV3ph7VQjuebXOQEA'
+PARAMETER_OVERRIDES='--parameter-overrides GroupBotProject=Groot Accounts={"dev":"757264843183"} SlackToken=Jsy6HbHkV3ph7VQjuebXOQEA'
 
 USAGE="usage: $0 <command name>\nvalid command names: build delete deploy invoke upload"
 
@@ -67,6 +67,14 @@ elif [ "$COMMAND" = "deploy" ]; then
 
     echo "Executing aws cloudformation deploy..."
     aws cloudformation deploy --template-file "$OUTPUT_TEMPLATE_FILE" --stack-name $STACK_NAME --capabilities CAPABILITY_NAMED_IAM $PARAMETER_OVERRIDES
+
+    if [ $? -ne 0 ]; then
+        # Print some help on why it failed.
+        echo ""
+        echo "Printing recent CloudFormation errors..."
+        aws cloudformation describe-stack-events --stack-name $STACK_NAME --query 'reverse(StackEvents[?ResourceStatus==`CREATE_FAILED`||ResourceStatus==`UPDATE_FAILED`].[ResourceType,LogicalResourceId,ResourceStatusReason])' --output text
+        exit 4
+    fi
 
     # cleanup
     rm "$OUTPUT_TEMPLATE_FILE"

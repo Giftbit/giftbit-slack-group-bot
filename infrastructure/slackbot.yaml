@@ -16,6 +16,43 @@ Parameters:
 Resources:
   S3DataStore:
     Type: AWS::S3::Bucket
+#  S3DataStorePolicy:
+#    Type: AWS::S3::BucketPolicy
+#    Properties:
+#      Bucket: !Ref S3DataStore
+#      PolicyDocument:
+#        Statement:
+#          -
+#            Effect: Allow
+#            Action:
+#              - s3:GetObject
+#            Resource:
+#              - !Sub "arn:aws:s3:::${S3DataStore}/verifications/*/${!aws:username}/${!aws:userid}/*"
+#            Principal: "*"
+#            Condition:
+#              StringEquals:
+#                aws:principaltype: "User"
+#          -
+#            Effect: Deny
+#            Action:
+#              - s3:*
+#            NotResource:
+#              - !Sub "arn:aws:s3:::${S3DataStore}/verifications/*/${!aws:username}/${!aws:userid}/*"
+#            Principal: "*"
+#            Condition:
+#              StringEquals:
+#                aws:principaltype: "User"
+  SlackBotRoleIds:
+    Type: AWS::CloudFormation::CustomResource
+    Version: 1.0
+    Properties:
+      ServiceToken: !GetAtt RoleLookupLambda.Arn
+      RoleNames: !Join
+        - ","
+        -
+          - !Ref SlackBotBackgroundRole
+          - !Ref SlackBotRole
+
   SlackBotBackgroundFunction:
     Type: AWS::Lambda::Function
     Properties:
@@ -28,6 +65,7 @@ Resources:
         Variables:
           GROUP_BOT_PROJECT: !Ref GroupBotProject
           REGION: !Ref AWS::Region
+          DATA_STORE_BUCKET: !Ref S3DataStore
   SlackBotBackgroundRole:
     Type: AWS::IAM::Role
     Properties:
@@ -44,6 +82,22 @@ Resources:
                 - lambda.amazonaws.com
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        -
+          PolicyName: SlackBotAccess
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              -
+                Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                  - s3:ListBucket
+                  - s3:DeleteObject
+                Resource:
+                  - !Sub "arn:aws:s3:::${S3DataStore}"
+                  - !Sub "arn:aws:s3:::${S3DataStore}/*"
   SlackBotGroupListerInvokeAccess:
     Type: AWS::Lambda::Permission
     Properties:
@@ -65,6 +119,8 @@ Resources:
           GROUP_BOT_PROJECT: !Ref GroupBotProject
           REGION: !Ref AWS::Region
           SLACK_BOT_BACKGROUND_TASK_LAMBDA_ARN: !GetAtt SlackBotBackgroundFunction.Arn
+          DATA_STORE_BUCKET: !Ref S3DataStore
+          ACCOUNT_ID: !Ref AWS::AccountId
   SlackBotRole:
     Type: AWS::IAM::Role
     Properties:
@@ -193,3 +249,39 @@ Resources:
       Parameters:
         GroupBotProject: !Ref GroupBotProject
         GroupBotSlackHandlerAccount: !Ref AWS::AccountId
+
+  RoleLookupRole:
+    Type: AWS::IAM::Role
+    Properties:
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action:
+              - sts:AssumeRole
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+      Policies:
+        -
+          PolicyName: RoleAccess
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              -
+                Effect: Allow
+                Action:
+                  - iam:GetRole
+                Resource: "*"
+  RoleLookupLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      Description: >
+        Backs a CloudFormation Custom Resource for looking up Role Unique IDs (useful in locking down buckets)
+      Role: !GetAtt RoleLookupRole.Arn
+      Handler: index.handler
+      Runtime: nodejs6.10
+      Timeout: 15
+      Code: ../res/role-id-lookup.zip

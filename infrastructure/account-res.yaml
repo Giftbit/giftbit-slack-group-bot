@@ -10,16 +10,16 @@ Parameters:
     Description: The Account ID that contains the Group Bot Slack Handler
 
 Resources:
-  GroupListerFunction:
+  IamReaderFunction:
     Type: AWS::Lambda::Function
     Properties:
-      Code: ../dist/groupLister/groupLister.zip
-      FunctionName: !Sub "${GroupBotProject}-GroupLister"
+      Code: ../dist/iamReader/iamReader.zip
+      FunctionName: !Sub "${GroupBotProject}-IamReader"
       Handler: index.handler
       Runtime: nodejs6.10
       Timeout: 30
-      Role: !GetAtt GroupListerRole.Arn
-  GroupListerRole:
+      Role: !GetAtt IamReaderRole.Arn
+  IamReaderRole:
     Type: AWS::IAM::Role
     Properties:
       AssumeRolePolicyDocument:
@@ -36,7 +36,7 @@ Resources:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
       Policies:
         -
-          PolicyName: GroupListerAccess
+          PolicyName: IamReaderAccess
           PolicyDocument:
             Version: 2012-10-17
             Statement:
@@ -44,10 +44,11 @@ Resources:
                 Effect: Allow
                 Action:
                   - iam:ListGroups
+                  - iam:GetUser
                 Resource: "*"
-  SlackBotGroupListerInvokeAccess:
+  SlackBotIamReaderInvokeAccess:
     Type: AWS::Lambda::Permission
     Properties:
       Action: lambda:InvokeFunction
-      FunctionName: !GetAtt GroupListerFunction.Arn
+      FunctionName: !GetAtt IamReaderFunction.Arn
       Principal: !Sub "arn:aws:iam::${GroupBotSlackHandlerAccount}:role/${GroupBotProject}-SlackBotBackgroundRole"
