@@ -30,3 +30,12 @@ export interface ShowUserAccountsTask extends CallbackTask {
     accounts: { [accountName: string]: string };
     slackUserId: string;
 }
+
+export interface GroupAdditionRequestTask extends CallbackTask {
+    command: "groupAdditionRequest";
+    slackUserId: string;
+    accountId: string;
+    accountName: string;
+    groupName: string;
+    triggerWord: string;
+}

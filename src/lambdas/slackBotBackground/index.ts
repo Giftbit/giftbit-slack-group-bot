@@ -1,6 +1,7 @@
 import "babel-polyfill";
 import {
-    CompleteRegistrationVerificationTask, CreateRegistrationVerificationTask, ListGroupsTask, ShowUserAccountsTask,
+    CompleteRegistrationVerificationTask, CreateRegistrationVerificationTask, GroupAdditionRequestTask, ListGroupsTask,
+    ShowUserAccountsTask,
     Task
 } from "./Task";
 import * as aws from "aws-sdk";
@@ -25,7 +26,8 @@ const handlers: { [ key: string]: TaskHandler} = {
     listGroups: listGroupsHandler,
     createRegistrationVerification: createRegistrationVerificationHandler,
     completeRegistrationVerification: completeRegistrationVerificationHandler,
-    showUserAccounts: showUserAccountsHandler
+    showUserAccounts: showUserAccountsHandler,
+    groupAdditionRequest: groupAdditionRequestHandler
 };
 
 export function handler (task: Task, ctx: awslambda.Context, callback: awslambda.Callback): void {
@@ -256,5 +258,83 @@ async function showUserAccountsHandler(task: ShowUserAccountsTask) {
 
     await sendResponse({
         text: responseLines.join("\n")
+    }, task.responseUrl);
+}
+
+async function groupAdditionRequestHandler(task: GroupAdditionRequestTask) {
+    const accountId = task.accountId;
+    const accountName = task.accountName;
+    const slackUserId = task.slackUserId;
+    const groupName = task.groupName;
+
+    let getObjectResponse = null;
+    try {
+        const getObjectRequest: aws.S3.Types.GetObjectRequest = {
+            Bucket: DATA_STORE_BUCKET,
+            Key: `users/${slackUserId}/${accountId}`
+        };
+        getObjectResponse = await s3.getObject(getObjectRequest).promise();
+    } catch (err) {
+        const responseLines = [
+            "We were unable to complete your request",
+            "Are you sure your account has been registered?",
+            "",
+            "You can register your account with",
+            `\`${task.triggerWord} register <username> <account>\``
+        ];
+        await sendResponse({
+            text: responseLines.join("\n")
+        }, task.responseUrl);
+        return
+    }
+
+    const username = getObjectResponse.Body.toString().trim();
+
+    const listGroupsRequest: ListGroupsRequest = {
+        command: "listGroups"
+    };
+
+    const lambdaResponse = await lambda.invoke({
+        FunctionName: `arn:aws:lambda:${REGION}:${accountId}:function:${GROUP_BOT_PROJECT}-IamReader`,
+        InvocationType: "RequestResponse",
+        Payload: JSON.stringify(listGroupsRequest)
+    }).promise();
+    const getGroupsResponse: ListGroupsResponse = JSON.parse(lambdaResponse.Payload.toString());
+    const groups = getGroupsResponse.groups;
+
+    if (groups.indexOf(groupName) < 0) {
+        const responseLines = [
+            `Group *${groupName}* was not recognized`,
+            "",
+            "You can se a full of available groups with",
+            `\`${task.triggerWord} list\``
+        ];
+        await sendResponse({
+            text: responseLines.join("\n")
+        }, task.responseUrl);
+        return
+    }
+
+    const requestUuid = uuid.v4();
+    const groupAdditionRequest = {
+        accountId: accountId,
+        userName: username,
+        groupName: groupName
+    };
+    const putObjectRequest: aws.S3.Types.PutObjectRequest = {
+        Body: JSON.stringify(groupAdditionRequest),
+        Bucket: DATA_STORE_BUCKET,
+        Key: `requests/${requestUuid}`
+    };
+    await s3.putObject(putObjectRequest).promise();
+
+    const responseLines = [
+        `<@${slackUserId}> has requested to be added to the group *${groupName}* in the *${accountName}* account`,
+        "To approve this request, run the command",
+        `\`${task.triggerWord} approve ${requestUuid}\``
+    ];
+    await sendResponse({
+        text: responseLines.join("\n"),
+        response_type: "in_channel"
     }, task.responseUrl);
 }

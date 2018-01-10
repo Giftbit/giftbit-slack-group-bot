@@ -5,7 +5,7 @@ import * as uuid from "node-uuid";
 import {Message} from "./Message";
 import {
     ListGroupsTask, CreateRegistrationVerificationTask,
-    CompleteRegistrationVerificationTask, ShowUserAccountsTask,
+    CompleteRegistrationVerificationTask, ShowUserAccountsTask, GroupAdditionRequestTask,
 } from "../slackBotBackground/Task";
 
 const debug = true;
@@ -41,7 +41,7 @@ const actionDescriptions:  { [key: string]: string } = {
     "register <username> <account>": "Registers your AWS Username for an account so we can add it to groups",
     "verify <token>": "Verifies the AWS Account you registered",
     "whoami": "Displays your registered AWS IAM username",
-    "request <group_name>": "Creates a request to be added to a group temporarily",
+    "request <group_name> <account>": "Creates a request to be added to a group temporarily",
     "approve <request_id>": "Approves a request to join a group"
 };
 
@@ -135,7 +135,8 @@ async function registerHandler(words: string[], message: Message): Promise<any> 
 
     if (words.length < 2) {
         const helpText = [
-            "This command requires an \<username\> and \<account\>.",
+            "This command requires an <username> and <account>.",
+            `Usage: \`${message.command} register <username> <account>\``,
             "",
             "For your convenience, you can get your username",
             "from your terminal using:",
@@ -154,7 +155,7 @@ async function registerHandler(words: string[], message: Message): Promise<any> 
         const accounts = Object.keys(ACCOUNTS).map(accountName => `*${accountName}*`).join(", ");
 
         const helpText = [
-            `The account '${account}' was not recognized`,
+            `The account *${account}* was not recognized`,
             "",
             `The known accounts ${connectorWord} ${accountNames}`
         ];
@@ -233,35 +234,53 @@ async function whoamiHandler(words: string[], message: Message): Promise<any> {
 }
 
 async function requestHandler(words: string[], message: Message): Promise<any> {
-    if (words.length < 1) {
+    const groupName = words.shift();
+    const accountName = words.shift();
+
+    if (!(groupName && accountName)) {
+        const responseLines = [
+            "A group name and an account are required.",
+            `Usage: \`${message.command} request <group_name> <account>\``,
+            "",
+            `See \`${message.command} list\` for the set of available groups`
+        ];
         return {
-            text: "A group name is required. See `groot list` for the set of groups"
+            text: responseLines.join("\n")
         };
     }
 
-    let awsUserName = await getRegisteredUserName(message.user_id);
-
-    if (!awsUserName) {
+    if (!(accountName in ACCOUNTS)) {
+        const accountNames = Object.keys(ACCOUNTS).map(anAccountName => `*${anAccountName}*`).join(", ");
+        const connectorWord = Object.keys(ACCOUNTS).length == 1 ? "is" : "are";
+        const plural = Object.keys(ACCOUNTS).length != 1 ? "" : "s";
+        const responseLines = [
+            `Account name *${accountName}* was not recognized`,
+            "",
+            `The known account${plural} ${connectorWord} ${accountNames}`
+        ];
         return {
-            text: "We couldn't find a user registered for you. Try `register <aws_user_name>`"
-        };
+            text: responseLines.join("\n")
+        }
     }
 
-    let groupName = words.shift();
-
-    let allGroups = getAllGroups();
-
-    debug && console.log("groupName:", groupName, "allGroups:", allGroups);
-    if (allGroups.indexOf(groupName) < 0) {
-        return {
-            text: "Sorry, the group `" + groupName + "` is not in the list of requestable groups. See `list` for the list of requestable groups."
-        };
-    }
-
-    const id = await createRequest(message.user_name, awsUserName, groupName);
+    const accountId = ACCOUNTS[accountName];
+    const groupAdditionRequestTask: GroupAdditionRequestTask = {
+        command: "groupAdditionRequest",
+        accountId: accountId,
+        accountName: accountName,
+        slackUserId: message.user_id,
+        groupName: groupName,
+        triggerWord: message.command,
+        responseUrl: message.response_url
+    };
+    lambda.invoke({
+        FunctionName: SLACK_BOT_BACKGROUND_TASK_LAMBDA_ARN,
+        InvocationType: "Event",
+        Payload: JSON.stringify(groupAdditionRequestTask)
+    }).promise();
 
     return {
-        text: "`" + message.user_name + "` has requested to join `" + groupName + "`. To approve this use `groot approve " + id + "`"
+        text: "Validating request..."
     };
 }
 
@@ -307,109 +326,4 @@ async function approveHandler(words: string[], message: Message): Promise<any> {
     return {
         text: `Request '${requestId}' to add '${request["iamUser"].S}' to group '${request["groupName"]}' approved by ${message.user_name}'.`
     };
-}
-
-async function getRegisteredUserName(userId: string): Promise<any> {
-    try {
-        let getResponse = await dynamo.getItem({
-            Key: {
-                id: {
-                    S: userId
-                }
-            },
-            TableName: usersTableName
-        }).promise();
-
-        return getResponse.Item["iamUser"].S;
-    }
-    catch (err) {
-        return null;
-    }
-}
-
-async function registerUserName(userId: string, userName: string): Promise<any> {
-    let putResponse = await dynamo.putItem({
-        Item: {
-            id: { S: userId},
-            iamUser: { S: userName}
-        },
-        TableName: usersTableName
-    }).promise();
-}
-
-function getApprovers(): string[] {
-    return APPROVERS.trim().split(" ").filter((x: string) => x);
-}
-
-function getDevGroups(): string[] {
-    return process.env.DEV_GROUPS.trim().split(" ").filter((x: string) => x);
-}
-
-function getProdGroups(): string[] {
-    return process.env.PROD_GROUPS.trim().split(" ").filter((x: string) => x);
-}
-
-function getAllGroups(): string[] {
-    return getDevGroups().concat(getProdGroups());
-}
-
-async function createRequest(slackUserName: string, awsUserName: string, groupName: string): Promise<any> {
-    let id = uuid.v4();
-    let requestTime = new Date().getTime();
-
-    let putResponse = await dynamo.putItem({
-        Item: {
-            id: { S: id },
-            requestTime: { N: requestTime.toString() },
-            slackUser: { S: slackUserName },
-            iamUser: { S: awsUserName },
-            groupName: { S: groupName },
-            membershipDuration: { N: membershipDurationMinutes.toString() }
-        },
-        TableName: requestTableName
-    }).promise();
-
-    return id;
-}
-
-async function getRequest(requestId: string): Promise<aws.DynamoDB.Types.AttributeMap> {
-    try {
-        let getResponse = await dynamo.getItem({
-            Key: {
-                id: {
-                    S: requestId
-                }
-            },
-            TableName: requestTableName
-        }).promise();
-
-        return getResponse.Item;
-    }
-    catch (err) {
-        return null;
-    }
-}
-
-async function approveRequest(requestId: string, approvingUserName: string) {
-    let approvalTime = new Date().getTime();
-
-    let updateRequest = await dynamo.updateItem({
-        TableName: requestTableName,
-        Key: {
-            id: { S: requestId }
-        },
-        UpdateExpression: "SET approvedBy = :approver, approvedAt = :approvalTime",
-        ExpressionAttributeValues: {
-            ":approver": { S: approvingUserName },
-            ":approvalTime": { N: approvalTime.toString() }
-        },
-        ReturnValues: "UPDATED_NEW"
-    }).promise();
-    debug && console.log("updateRequest:", updateRequest);
-
-    let invokeRequest = await lambda.invoke({
-        FunctionName: "slack-group-bot_group-updater_dev",
-        InvocationType: "Event"
-    }).promise();
-    debug && console.log("invokeRequest:", invokeRequest);
 }
