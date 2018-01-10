@@ -8,6 +8,8 @@ import * as awslambda from "aws-lambda";
 import * as uuid from "node-uuid";
 import {sendResponse} from "./Responder";
 import {ListGroupsResponse, ListGroupsRequest, GetUserIdRequest, GetUserIdResponse} from "../iamReader/IamReaderEvent";
+import {ListObjectsRequest} from "aws-sdk/clients/s3";
+import {account} from "aws-sdk/clients/sns";
 
 const lambda = new aws.Lambda();
 const s3 = new aws.S3();
@@ -219,5 +221,40 @@ async function completeRegistrationVerificationHandler(task: CompleteRegistratio
 }
 
 async function showUserAccountsHandler(task: ShowUserAccountsTask) {
+    const accounts = task.accounts;
+    const slackUserId = task.slackUserId;
 
+    const accountIdNameMap = {};
+    for (let accountName of Object.keys(accounts)) {
+        const accountId = accounts[accountName];
+        accountIdNameMap[accountId] = accountName;
+    }
+
+    const listObjectsRequest: ListObjectsRequest = {
+        Bucket: DATA_STORE_BUCKET,
+        Prefix: `users/${slackUserId}/`
+    };
+    const listObjectsResponse = await s3.listObjects(listObjectsRequest).promise();
+    const userAccountObjects = listObjectsResponse.Contents;
+
+    let responseLines = [];
+    for (let userAccountObject of userAccountObjects) {
+        const objectKey = userAccountObject.Key;
+        const objectKeyPieces = objectKey.split("/");
+        const accountId = objectKeyPieces[2];
+
+        const getObjectRequest: aws.S3.Types.GetObjectRequest = {
+            Bucket: DATA_STORE_BUCKET,
+            Key: objectKey
+        };
+        const getObjectResponse = await s3.getObject(getObjectRequest).promise();
+        const username = getObjectResponse.Body.toString().trim();
+
+        const accountName = accountIdNameMap[accountId];
+        responseLines.push(`*${accountName}*: ${username}`)
+    }
+
+    await sendResponse({
+        text: responseLines.join("\n")
+    }, task.responseUrl);
 }
