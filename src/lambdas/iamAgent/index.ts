@@ -4,7 +4,7 @@ import * as aws from "aws-sdk";
 import {
     GetUserIdRequest, GetUserIdResponse, IamReaderRequest, IamReaderResponse, ListGroupsRequest,
     ListGroupsResponse
-} from "./IamReaderEvent";
+} from "./IamAgentEvent";
 
 const debug = true;
 let iam = new aws.IAM();
@@ -15,7 +15,7 @@ type IamTask = (request: IamReaderRequest) => Promise<IamReaderResponse>;
 
 const handlers: { [ key: string]: IamTask} = {
     listGroups: listGroupsHandler,
-    getUserId: getUserIdHandler
+    getUserId: getUserIdHandler,
 };
 
 export function handler(request: IamReaderRequest, context: awslambda.Context, callback: awslambda.Callback): void {

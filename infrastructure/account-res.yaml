@@ -13,8 +13,8 @@ Resources:
   IamReaderFunction:
     Type: AWS::Lambda::Function
     Properties:
-      Code: ../dist/iamReader/iamReader.zip
-      FunctionName: !Sub "${GroupBotProject}-IamReader"
+      Code: ../dist/iamAgent/iamAgent.zip
+      FunctionName: !Sub "${GroupBotProject}-IamAgent"
       Handler: index.handler
       Runtime: nodejs6.10
       Timeout: 30

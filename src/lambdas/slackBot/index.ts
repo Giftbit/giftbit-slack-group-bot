@@ -5,7 +5,7 @@ import * as uuid from "node-uuid";
 import {Message} from "./Message";
 import {
     ListGroupsTask, CreateRegistrationVerificationTask,
-    CompleteRegistrationVerificationTask, ShowUserAccountsTask, GroupAdditionRequestTask,
+    CompleteRegistrationVerificationTask, ShowUserAccountsTask, GroupAdditionRequestTask, GroupAdditionApprovalTask,
 } from "../slackBotBackground/Task";
 
 const debug = true;
@@ -13,13 +13,12 @@ const debug = true;
 const ACCOUNT_ID =  process.env.ACCOUNT_ID;
 const ACCOUNTS: { [accountName: string]: string } = JSON.parse(process.env.ACCOUNTS);
 const TOKEN = process.env.TOKEN;
-const APPROVERS: string = process.env.APPROVERS;
+const APPROVERS = process.env.APPROVERS || "";
 const SLACK_BOT_BACKGROUND_TASK_LAMBDA_ARN = process.env.SLACK_BOT_BACKGROUND_TASK_LAMBDA_ARN;
 const DATA_STORE_BUCKET = process.env.DATA_STORE_BUCKET;
 
-const usersTableName = "giftbit-slack-bot-users";
-const requestTableName = "giftbit-slack-bot-requests";
-const membershipDurationMinutes = 60;
+const REQUEST_VALID_MINUTES = 30;
+const MEMBERSHIP_DURATION_MINUTES = 60;
 
 type ActionHandler = (words: string[], message: Message) => Promise<any>;
 
@@ -269,8 +268,11 @@ async function requestHandler(words: string[], message: Message): Promise<any> {
         accountId: accountId,
         accountName: accountName,
         slackUserId: message.user_id,
+        slackUserName: message.user_name,
         groupName: groupName,
         triggerWord: message.command,
+        validForSeconds: REQUEST_VALID_MINUTES * 60,
+        membershipDurationMinutes: MEMBERSHIP_DURATION_MINUTES,
         responseUrl: message.response_url
     };
     lambda.invoke({
@@ -286,44 +288,40 @@ async function requestHandler(words: string[], message: Message): Promise<any> {
 
 async function approveHandler(words: string[], message: Message): Promise<any> {
     if (words.length < 1) {
+        const responseLines = [
+            "A Request ID is required to approve a request",
+            "",
+            `Usage: \`${message.command} approve <request_id>\``,
+        ];
         return {
-            text: "A request ID is required. Don't be silly."
-        };
+            text: responseLines.join("\n")
+        }
     }
 
-    const approvers = getApprovers();
+    const approvers = APPROVERS.split(",").map(approver => approver.trim()).filter(approver => approver);
+    debug && console.log("approvers",approvers);
     if (approvers.length > 0 && approvers.indexOf(message.user_name) < 0) {
         return {
-            text: "I did not recognize `" + message.user_name + "` in the list of approvers."
+            text: `${message.user_name} was not recognized as an approver`
         };
     }
 
     let requestId = words.shift();
-    let request = await getRequest(requestId);
 
-    debug && console.log("request:", request);
-
-    if (!request) {
-        return {
-            text: "No request could be found with ID `" + requestId + "`"
-        };
-    }
-
-    if (request["approvedBy"]) {
-        return {
-            text: "Request ID `" + requestId + "` already appears to have been approved."
-        };
-    }
-
-    if (request["slackUser"].S === message.user_name) {
-        return {
-            text: "One may not approve their own requests."
-        };
-    }
-
-    await approveRequest(requestId, message.user_name);
+    const groupAdditionApprovalTask: GroupAdditionApprovalTask = {
+        command: "groupAdditionApproval",
+        slackUserId: message.user_id,
+        slackUserName: message.user_name,
+        requestId: requestId,
+        responseUrl: message.response_url
+    };
+    lambda.invoke({
+        FunctionName: SLACK_BOT_BACKGROUND_TASK_LAMBDA_ARN,
+        InvocationType: "Event",
+        Payload: JSON.stringify(groupAdditionApprovalTask)
+    }).promise();
 
     return {
-        text: `Request '${requestId}' to add '${request["iamUser"].S}' to group '${request["groupName"]}' approved by ${message.user_name}'.`
+        text: `Validating Request...`
     };
 }

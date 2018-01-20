@@ -33,9 +33,19 @@ export interface ShowUserAccountsTask extends CallbackTask {
 
 export interface GroupAdditionRequestTask extends CallbackTask {
     command: "groupAdditionRequest";
+    slackUserName: string;
     slackUserId: string;
     accountId: string;
     accountName: string;
     groupName: string;
     triggerWord: string;
+    validForSeconds: number;
+    membershipDurationMinutes: number;
+}
+
+export interface GroupAdditionApprovalTask extends CallbackTask {
+    command: "groupAdditionApproval";
+    slackUserId: string;
+    slackUserName: string;
+    requestId: string;
 }

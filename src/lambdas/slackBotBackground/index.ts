@@ -1,6 +1,7 @@
 import "babel-polyfill";
 import {
-    CompleteRegistrationVerificationTask, CreateRegistrationVerificationTask, GroupAdditionRequestTask, ListGroupsTask,
+    CompleteRegistrationVerificationTask, CreateRegistrationVerificationTask, GroupAdditionApprovalTask,
+    GroupAdditionRequestTask, ListGroupsTask,
     ShowUserAccountsTask,
     Task
 } from "./Task";
@@ -8,9 +9,10 @@ import * as aws from "aws-sdk";
 import * as awslambda from "aws-lambda";
 import * as uuid from "node-uuid";
 import {sendResponse} from "./Responder";
-import {ListGroupsResponse, ListGroupsRequest, GetUserIdRequest, GetUserIdResponse} from "../iamReader/IamReaderEvent";
+import {ListGroupsResponse, ListGroupsRequest, GetUserIdRequest, GetUserIdResponse} from "../iamAgent/IamAgentEvent";
 import {ListObjectsRequest} from "aws-sdk/clients/s3";
 import {account} from "aws-sdk/clients/sns";
+import {GroupAdditionRequest, Username} from "./Data";
 
 const lambda = new aws.Lambda();
 const s3 = new aws.S3();
@@ -27,7 +29,8 @@ const handlers: { [ key: string]: TaskHandler} = {
     createRegistrationVerification: createRegistrationVerificationHandler,
     completeRegistrationVerification: completeRegistrationVerificationHandler,
     showUserAccounts: showUserAccountsHandler,
-    groupAdditionRequest: groupAdditionRequestHandler
+    groupAdditionRequest: groupAdditionRequestHandler,
+    groupAdditionApproval: groupAdditionApprovalHandler
 };
 
 export function handler (task: Task, ctx: awslambda.Context, callback: awslambda.Callback): void {
@@ -58,7 +61,7 @@ async function listGroupsHandler(task: ListGroupsTask) {
         };
 
         const lambdaPromise =  lambda.invoke({
-            FunctionName: `arn:aws:lambda:${REGION}:${accountId}:function:${GROUP_BOT_PROJECT}-IamReader`,
+            FunctionName: `arn:aws:lambda:${REGION}:${accountId}:function:${GROUP_BOT_PROJECT}-IamAgent`,
             InvocationType: "RequestResponse",
             Payload: JSON.stringify(listGroupsRequest)
         }).promise();
@@ -112,7 +115,7 @@ async function createRegistrationVerificationHandler(task: CreateRegistrationVer
     };
 
     const lambdaResponse = await lambda.invoke({
-        FunctionName: `arn:aws:lambda:${REGION}:${accountId}:function:${GROUP_BOT_PROJECT}-IamReader`,
+        FunctionName: `arn:aws:lambda:${REGION}:${accountId}:function:${GROUP_BOT_PROJECT}-IamAgent`,
         InvocationType: "RequestResponse",
         Payload: JSON.stringify(getUserIdRequest)
     }).promise();
@@ -143,7 +146,7 @@ async function createRegistrationVerificationHandler(task: CreateRegistrationVer
                 Bucket: DATA_STORE_BUCKET,
                 Key: objectKey
             };
-            await s3.putObject(params).promise()
+            await s3.putObject(params).promise();
 
             const responseLines = [
                 `To verify your ${username} with your user`,
@@ -188,7 +191,7 @@ async function completeRegistrationVerificationHandler(task: CompleteRegistratio
         if (verificationValue.trim() === token) {
             const verificationParts = verificationKey.split("/");
             const accountId = verificationParts[1];
-            const username = verificationParts[3];
+            const username: Username = verificationParts[3];
             const slackUserId = verificationParts[4];
             const putObjectRequest: aws.S3.Types.PutObjectRequest = {
                 Body: username,
@@ -250,7 +253,7 @@ async function showUserAccountsHandler(task: ShowUserAccountsTask) {
             Key: objectKey
         };
         const getObjectResponse = await s3.getObject(getObjectRequest).promise();
-        const username = getObjectResponse.Body.toString().trim();
+        const username: Username = getObjectResponse.Body.toString().trim();
 
         const accountName = accountIdNameMap[accountId];
         responseLines.push(`*${accountName}*: ${username}`)
@@ -265,7 +268,10 @@ async function groupAdditionRequestHandler(task: GroupAdditionRequestTask) {
     const accountId = task.accountId;
     const accountName = task.accountName;
     const slackUserId = task.slackUserId;
+    const slackUserName = task.slackUserName;
     const groupName = task.groupName;
+    const validForSeconds = task.validForSeconds;
+    const membershipDurationMinutes = task.membershipDurationMinutes;
 
     let getObjectResponse = null;
     try {
@@ -288,14 +294,14 @@ async function groupAdditionRequestHandler(task: GroupAdditionRequestTask) {
         return
     }
 
-    const username = getObjectResponse.Body.toString().trim();
+    const username: Username = getObjectResponse.Body.toString().trim();
 
     const listGroupsRequest: ListGroupsRequest = {
         command: "listGroups"
     };
 
     const lambdaResponse = await lambda.invoke({
-        FunctionName: `arn:aws:lambda:${REGION}:${accountId}:function:${GROUP_BOT_PROJECT}-IamReader`,
+        FunctionName: `arn:aws:lambda:${REGION}:${accountId}:function:${GROUP_BOT_PROJECT}-IamAgent`,
         InvocationType: "RequestResponse",
         Payload: JSON.stringify(listGroupsRequest)
     }).promise();
@@ -315,26 +321,38 @@ async function groupAdditionRequestHandler(task: GroupAdditionRequestTask) {
         return
     }
 
+    const expiryTime = new Date().getTime() + validForSeconds * 1000;
     const requestUuid = uuid.v4();
-    const groupAdditionRequest = {
+    const groupAdditionRequest: GroupAdditionRequest = {
         accountId: accountId,
+        requesterSlackName: slackUserName,
         userName: username,
-        groupName: groupName
+        groupName: groupName,
+        membershipDurationMinutes: membershipDurationMinutes
     };
     const putObjectRequest: aws.S3.Types.PutObjectRequest = {
         Body: JSON.stringify(groupAdditionRequest),
         Bucket: DATA_STORE_BUCKET,
-        Key: `requests/${requestUuid}`
+        Key: `requests/${requestUuid}-${expiryTime}`
     };
     await s3.putObject(putObjectRequest).promise();
 
+    const epoch = Math.floor(expiryTime / 1000);
     const responseLines = [
-        `<@${slackUserId}> has requested to be added to the group *${groupName}* in the *${accountName}* account`,
+        `<@${slackUserId}> has requested to be added to the group *${groupName}* in the *${accountName}* account for *${membershipDurationMinutes}* minutes.`,
         "To approve this request, run the command",
-        `\`${task.triggerWord} approve ${requestUuid}\``
+        `\`${task.triggerWord} approve ${requestUuid}\``,
+        "",
+        `This request will expire <!date^${epoch}^on {date} at {time}|at ${new Date(expiryTime).toISOString()}>`
     ];
     await sendResponse({
         text: responseLines.join("\n"),
         response_type: "in_channel"
     }, task.responseUrl);
+}
+
+async function groupAdditionApprovalHandler(task: GroupAdditionApprovalTask) {
+    const requestId = task.requestId;
+    const slackUserName = task.slackUserName;
+    const slackUserId = task.slackUserId;
 }
