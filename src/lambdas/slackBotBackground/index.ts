@@ -9,10 +9,12 @@ import * as aws from "aws-sdk";
 import * as awslambda from "aws-lambda";
 import * as uuid from "node-uuid";
 import {sendResponse} from "./Responder";
-import {ListGroupsResponse, ListGroupsRequest, GetUserIdRequest, GetUserIdResponse} from "../iamAgent/IamAgentEvent";
+import {
+    ListGroupsResponse, ListGroupsRequest, GetUserIdRequest, GetUserIdResponse,
+    AddUserToGroupResponse, AddUserToGroupRequest
+} from "../iamAgent/IamAgentEvent";
 import {ListObjectsRequest} from "aws-sdk/clients/s3";
-import {account} from "aws-sdk/clients/sns";
-import {GroupAdditionRequest, Username} from "./Data";
+import {GroupAdditionApproval, GroupAdditionRequest, Username} from "./Data";
 
 const lambda = new aws.Lambda();
 const s3 = new aws.S3();
@@ -21,6 +23,8 @@ const debug = true;
 const GROUP_BOT_PROJECT = process.env.GROUP_BOT_PROJECT;
 const REGION = process.env.REGION;
 const DATA_STORE_BUCKET = process.env.DATA_STORE_BUCKET;
+
+const ALLOW_SELF_APPROVAL = process.env.ALLOW_SELF_APPROVAL == "true";
 
 type TaskHandler = (task: Task) => Promise<void>;
 
@@ -111,7 +115,7 @@ async function createRegistrationVerificationHandler(task: CreateRegistrationVer
     const triggerWord = task.triggerWord;
     const getUserIdRequest: GetUserIdRequest = {
         command: "getUserId",
-        username: username
+        userName: username
     };
 
     const lambdaResponse = await lambda.invoke({
@@ -180,7 +184,7 @@ async function completeRegistrationVerificationHandler(task: CompleteRegistratio
     const verificationObject = verificationObjects.find(verificationObject => verificationObject.Key.endsWith(`/${slackUserId}`));
 
     if (verificationObject) {
-        const verificationKey = verificationObject.Key
+        const verificationKey = verificationObject.Key;
         const getObjectRequest = {
             Bucket: DATA_STORE_BUCKET,
             Key: verificationKey
@@ -299,13 +303,13 @@ async function groupAdditionRequestHandler(task: GroupAdditionRequestTask) {
     const listGroupsRequest: ListGroupsRequest = {
         command: "listGroups"
     };
-
     const lambdaResponse = await lambda.invoke({
         FunctionName: `arn:aws:lambda:${REGION}:${accountId}:function:${GROUP_BOT_PROJECT}-IamAgent`,
         InvocationType: "RequestResponse",
         Payload: JSON.stringify(listGroupsRequest)
     }).promise();
     const getGroupsResponse: ListGroupsResponse = JSON.parse(lambdaResponse.Payload.toString());
+
     const groups = getGroupsResponse.groups;
 
     if (groups.indexOf(groupName) < 0) {
@@ -325,7 +329,9 @@ async function groupAdditionRequestHandler(task: GroupAdditionRequestTask) {
     const requestUuid = uuid.v4();
     const groupAdditionRequest: GroupAdditionRequest = {
         accountId: accountId,
+        accountName: accountName,
         requesterSlackName: slackUserName,
+        requesterSlackId: slackUserId,
         userName: username,
         groupName: groupName,
         membershipDurationMinutes: membershipDurationMinutes
@@ -355,4 +361,127 @@ async function groupAdditionApprovalHandler(task: GroupAdditionApprovalTask) {
     const requestId = task.requestId;
     const slackUserName = task.slackUserName;
     const slackUserId = task.slackUserId;
+
+    const currentTime = new Date().getTime();
+    debug && console.log("currentTime", currentTime);
+
+    const listObjectsRequest: aws.S3.Types.ListObjectsRequest = {
+        Bucket: DATA_STORE_BUCKET,
+        Prefix: `requests/${requestId}-`
+    };
+    const listObjectsResponse = await s3.listObjects(listObjectsRequest).promise();
+    debug && console.log("listObjectsResponse", listObjectsResponse);
+    const requestObject = listObjectsResponse.Contents.find((request) => {
+        debug && console.log("request",request);
+        const expiry = parseInt(request.Key.replace(`requests/${requestId}-`,""));
+        debug && console.log("expiry",expiry);
+        return currentTime <= expiry;
+    });
+
+    debug && console.log("requestObject", requestObject);
+
+    if (!requestObject) {
+        const responseLines = [
+            `Unable to find request ${requestId}. Either the ID is incorrect, or it expired.`,
+            "",
+            "Please check your request ID and try again, or have the requester repeat their request."
+        ];
+        await sendResponse({
+            text: responseLines.join("\n")
+        }, task.responseUrl);
+        return
+    }
+
+    const getObjectRequest = {
+        Bucket: DATA_STORE_BUCKET,
+        Key: requestObject.Key
+    };
+    const getObjectResponse = await s3.getObject(getObjectRequest).promise();
+    const request: GroupAdditionRequest = JSON.parse(getObjectResponse.Body.toString());
+
+    const expiryTime = new Date().getTime() + request.membershipDurationMinutes * 60 * 1000;
+
+    if (! ALLOW_SELF_APPROVAL) {
+        if (request.requesterSlackId === slackUserId) {
+            const responseLines = [
+                "You are unable to approve your own requests. Please ask for approval from one of the approvers."
+            ];
+            await sendResponse({
+                text: responseLines.join("\n")
+            }, task.responseUrl);
+        }
+    }
+
+    try {
+        const putRemovalObjectRequest: aws.S3.Types.PutObjectRequest = {
+            Body: JSON.stringify(request),
+            Bucket: DATA_STORE_BUCKET,
+            Key: `removals/${requestId}-${expiryTime}`
+        };
+        await s3.putObject(putRemovalObjectRequest).promise();
+
+        const addUserToGroupRequest: AddUserToGroupRequest = {
+            command: "addUserToGroup",
+            userName: request.userName,
+            groupName: request.groupName
+        };
+        const lambdaResponse = await lambda.invoke({
+            FunctionName: `arn:aws:lambda:${REGION}:${request.accountId}:function:${GROUP_BOT_PROJECT}-IamAgent`,
+            InvocationType: "RequestResponse",
+            Payload: JSON.stringify(addUserToGroupRequest)
+        }).promise();
+        const addUserToGroupResponse: AddUserToGroupResponse = JSON.parse(lambdaResponse.Payload.toString());
+
+        if (! addUserToGroupResponse.userAddSuccessful) {
+            const responseLines = [
+                `An error occurred attempting to add *${request.userName}* to the group *${request.groupName}*.`,
+                "",
+                "Check with your AWS Administrator, or the logs of your Groupbot IAM Agent for further details."
+            ];
+            await sendResponse({
+                text: responseLines.join("\n")
+            }, task.responseUrl);
+            return
+        }
+
+        const approval: GroupAdditionApproval = Object.assign({
+            approverSlackName: slackUserName,
+            approverSlackId: slackUserId
+        }, request);
+        const putApprovalObjectRequest: aws.S3.Types.PutObjectRequest = {
+            Body: JSON.stringify(approval),
+            Bucket: DATA_STORE_BUCKET,
+            Key: requestObject.Key.replace("requests","approvals")
+        };
+        await s3.putObject(putApprovalObjectRequest).promise();
+
+        const deleteObjectRequest: aws.S3.Types.DeleteObjectRequest = {
+            Bucket: DATA_STORE_BUCKET,
+            Key: requestObject.Key
+        };
+        await s3.deleteObject(deleteObjectRequest).promise();
+    } catch (err) {
+        console.error("An error occurred in setting a deletion object", err);
+
+        const responseLines = [
+            `An error occurred attempting to add *${request.userName}* to the group *${request.groupName}*.`,
+            "",
+            "Check with your AWS Administrator, or the logs of your Groupbot IAM Agent for further details."
+        ];
+        await sendResponse({
+            text: responseLines.join("\n")
+        }, task.responseUrl);
+
+        return
+    }
+
+    const epoch = Math.floor(expiryTime / 1000);
+    const responseLines = [
+        `<@${slackUserId}> has approved <@${request.requesterSlackId}>'s has requested to be added to the group *${request.groupName}* in the *${request.accountName}* account.`,
+        `This permission will expire <!date^${epoch}^on {date} at {time}|at ${new Date(expiryTime).toISOString()}>`
+    ];
+    await sendResponse({
+        text: responseLines.join("\n"),
+        response_type: "in_channel"
+    }, task.responseUrl);
 }

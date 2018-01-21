@@ -27,7 +27,7 @@ Resources:
 #            Action:
 #              - s3:GetObject
 #            Resource:
-#              - !Sub "arn:aws:s3:::${S3DataStore}/verifications/*/${!aws:username}/${!aws:userid}/*"
+#              - !Sub "arn:aws:s3:::${S3DataStore}/verifications/*/${!aws:userName}/${!aws:userid}/*"
 #            Principal: "*"
 #            Condition:
 #              StringEquals:
@@ -37,7 +37,7 @@ Resources:
 #            Action:
 #              - s3:*
 #            NotResource:
-#              - !Sub "arn:aws:s3:::${S3DataStore}/verifications/*/${!aws:username}/${!aws:userid}/*"
+#              - !Sub "arn:aws:s3:::${S3DataStore}/verifications/*/${!aws:userName}/${!aws:userid}/*"
 #            Principal: "*"
 #            Condition:
 #              StringEquals:
@@ -66,6 +66,7 @@ Resources:
           GROUP_BOT_PROJECT: !Ref GroupBotProject
           REGION: !Ref AWS::Region
           DATA_STORE_BUCKET: !Ref S3DataStore
+          ALLOW_SELF_APPROVAL: true
   SlackBotBackgroundRole:
     Type: AWS::IAM::Role
     Properties:

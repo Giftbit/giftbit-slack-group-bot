@@ -46,6 +46,13 @@ Resources:
                   - iam:ListGroups
                   - iam:GetUser
                 Resource: "*"
+              -
+                Effect: Allow
+                Action:
+                  - iam:AddUserToGroup
+                  - iam:RemoveUserFromGroup
+                Resource:
+                  - !Sub "arn:aws:iam::${AWS::AccountId}:group/groupbot/*"
   SlackBotIamReaderInvokeAccess:
     Type: AWS::Lambda::Permission
     Properties:

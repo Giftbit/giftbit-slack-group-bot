@@ -2,6 +2,7 @@ import "babel-polyfill";
 import * as awslambda from "aws-lambda";
 import * as aws from "aws-sdk";
 import {
+    AddUserToGroupRequest, AddUserToGroupResponse,
     GetUserIdRequest, GetUserIdResponse, IamReaderRequest, IamReaderResponse, ListGroupsRequest,
     ListGroupsResponse
 } from "./IamAgentEvent";
@@ -16,6 +17,7 @@ type IamTask = (request: IamReaderRequest) => Promise<IamReaderResponse>;
 const handlers: { [ key: string]: IamTask} = {
     listGroups: listGroupsHandler,
     getUserId: getUserIdHandler,
+    addUserToGroup: addUserToGroupHandler
 };
 
 export function handler(request: IamReaderRequest, context: awslambda.Context, callback: awslambda.Callback): void {
@@ -51,10 +53,28 @@ async function listGroupsHandler(request: ListGroupsRequest): Promise<ListGroups
 }
 
 async function getUserIdHandler(request: GetUserIdRequest): Promise<GetUserIdResponse> {
-    const getUserResponse: aws.IAM.Types.GetUserResponse = await iam.getUser({UserName: request.username}).promise();
+    const getUserResponse: aws.IAM.Types.GetUserResponse = await iam.getUser({UserName: request.userName}).promise();
     debug && console.log("GetUserResponse",getUserResponse);
 
     return {
         userId: getUserResponse.User.UserId
+    }
+}
+
+async function addUserToGroupHandler(request: AddUserToGroupRequest): Promise<AddUserToGroupResponse> {
+    const userName = request.userName;
+    const groupName = request.groupName;
+
+    let userAddSuccessful: boolean = false;
+
+    try {
+        await iam.addUserToGroup({UserName: userName, GroupName: groupName});
+        userAddSuccessful = true;
+    }
+    catch (err) {
+        console.error(`An error occurred adding user '${userName}' to group '${groupName}`);
+    }
+    return {
+        userAddSuccessful: userAddSuccessful
     }
 }

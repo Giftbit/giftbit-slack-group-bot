@@ -39,7 +39,7 @@ const actionDescriptions:  { [key: string]: string } = {
     "list": "Lists the groups that can be requested",
     "register <username> <account>": "Registers your AWS Username for an account so we can add it to groups",
     "verify <token>": "Verifies the AWS Account you registered",
-    "whoami": "Displays your registered AWS IAM username",
+    "whoami": "Displays your registered AWS IAM userName",
     "request <group_name> <account>": "Creates a request to be added to a group temporarily",
     "approve <request_id>": "Approves a request to join a group"
 };
@@ -134,10 +134,10 @@ async function registerHandler(words: string[], message: Message): Promise<any> 
 
     if (words.length < 2) {
         const helpText = [
-            "This command requires an <username> and <account>.",
+            "This command requires an <userName> and <account>.",
             `Usage: \`${message.command} register <username> <account>\``,
             "",
-            "For your convenience, you can get your username",
+            "For your convenience, you can get your userName",
             "from your terminal using:",
             "`aws sts get-caller-identity --query Arn --output text | awk -F'/' '{print $2}'`",
             `and known accounts ${connectorWord} ${accountNames}`
