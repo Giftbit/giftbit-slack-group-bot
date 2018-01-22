@@ -11,10 +11,12 @@ import * as uuid from "node-uuid";
 import {sendResponse} from "./Responder";
 import {
     ListGroupsResponse, ListGroupsRequest, GetUserIdRequest, GetUserIdResponse,
-    AddUserToGroupResponse, AddUserToGroupRequest
+    AddUserToGroupResponse, AddUserToGroupRequest, RemoveUserFromGroupResponse, RemoveUserFromGroupRequest
 } from "../iamAgent/IamAgentEvent";
 import {ListObjectsRequest} from "aws-sdk/clients/s3";
 import {GroupAdditionApproval, GroupAdditionRequest, Username} from "./Data";
+import {ScheduledEvent} from "../../common/lambda-events";
+import {S3DataStore} from "./S3DataStore"
 
 const lambda = new aws.Lambda();
 const s3 = new aws.S3();
@@ -23,6 +25,8 @@ const debug = true;
 const GROUP_BOT_PROJECT = process.env.GROUP_BOT_PROJECT;
 const REGION = process.env.REGION;
 const DATA_STORE_BUCKET = process.env.DATA_STORE_BUCKET;
+
+const dataStore = new S3DataStore(DATA_STORE_BUCKET);
 
 const ALLOW_SELF_APPROVAL = process.env.ALLOW_SELF_APPROVAL == "true";
 
@@ -37,9 +41,9 @@ const handlers: { [ key: string]: TaskHandler} = {
     groupAdditionApproval: groupAdditionApprovalHandler
 };
 
-export function handler (task: Task, ctx: awslambda.Context, callback: awslambda.Callback): void {
-    debug && console.log("event", JSON.stringify(task, null, 2));
-    handlerAsync(task, ctx)
+export function handler (event: Task | ScheduledEvent, ctx: awslambda.Context, callback: awslambda.Callback): void {
+    debug && console.log("event", JSON.stringify(event, null, 2));
+    handlerAsync(event, ctx)
         .then(() => {
             callback(null, {});
         }, err => {
@@ -48,12 +52,16 @@ export function handler (task: Task, ctx: awslambda.Context, callback: awslambda
         });
 }
 
-async function handlerAsync(task: Task, context: awslambda.Context): Promise<void> {
-    if (!(task.command in handlers)) {
-        throw new Error(`Task does not exist with command: ${task.command}`);
+async function handlerAsync(event: ScheduledEvent | Task, context: awslambda.Context): Promise<void> {
+    if ((<ScheduledEvent>event).source === "aws.events" && (<ScheduledEvent>event)["detail-type"] === "Scheduled Event") {
+        return await resolveExpirations();
     }
 
-    return await handlers[task.command](task);
+    if (!((<Task>event).command in handlers)) {
+        throw new Error(`Task does not exist with command: ${(<Task>event).command}`);
+    }
+
+    return await handlers[(<Task>event).command]((<Task>event));
 }
 
 async function listGroupsHandler(task: ListGroupsTask) {
@@ -145,12 +153,7 @@ async function createRegistrationVerificationHandler(task: CreateRegistrationVer
         } else {
             const verificationUuid = uuid.v4();
             const objectKey = `verifications/${accountId}/${userId}/${username}/${slackUserId}`;
-            let params: aws.S3.Types.PutObjectRequest = {
-                Body: `${verificationUuid}\n`,
-                Bucket: DATA_STORE_BUCKET,
-                Key: objectKey
-            };
-            await s3.putObject(params).promise();
+            await dataStore.putObject(`${verificationUuid}\n`, objectKey);
 
             const responseLines = [
                 `To verify your ${username} with your user`,
@@ -185,24 +188,14 @@ async function completeRegistrationVerificationHandler(task: CompleteRegistratio
 
     if (verificationObject) {
         const verificationKey = verificationObject.Key;
-        const getObjectRequest = {
-            Bucket: DATA_STORE_BUCKET,
-            Key: verificationKey
-        };
-        const getObjectResponse = await s3.getObject(getObjectRequest).promise();
-        const verificationValue = getObjectResponse.Body.toString();
+        const verificationValue = await dataStore.getObject(verificationKey);
 
         if (verificationValue.trim() === token) {
             const verificationParts = verificationKey.split("/");
             const accountId = verificationParts[1];
             const username: Username = verificationParts[3];
             const slackUserId = verificationParts[4];
-            const putObjectRequest: aws.S3.Types.PutObjectRequest = {
-                Body: username,
-                Bucket: DATA_STORE_BUCKET,
-                Key: `users/${slackUserId}/${accountId}`
-            };
-            await s3.putObject(putObjectRequest).promise();
+            await dataStore.putObject(username, `users/${slackUserId}/${accountId}`);
 
             let responseLines = [
                 `IAM Account ${username} verified.`
@@ -211,11 +204,7 @@ async function completeRegistrationVerificationHandler(task: CompleteRegistratio
                 text: responseLines.join("\n")
             }, task.responseUrl);
 
-            const deleteObjectRequest: aws.S3.Types.DeleteObjectRequest = {
-                Bucket: DATA_STORE_BUCKET,
-                Key: verificationKey
-            };
-            await s3.deleteObject(deleteObjectRequest).promise();
+            await dataStore.deleteObject(verificationKey);
 
             return;
         }
@@ -252,12 +241,7 @@ async function showUserAccountsHandler(task: ShowUserAccountsTask) {
         const objectKeyPieces = objectKey.split("/");
         const accountId = objectKeyPieces[2];
 
-        const getObjectRequest: aws.S3.Types.GetObjectRequest = {
-            Bucket: DATA_STORE_BUCKET,
-            Key: objectKey
-        };
-        const getObjectResponse = await s3.getObject(getObjectRequest).promise();
-        const username: Username = getObjectResponse.Body.toString().trim();
+        const username: Username = (await dataStore.getObject(objectKey)).trim();
 
         const accountName = accountIdNameMap[accountId];
         responseLines.push(`*${accountName}*: ${username}`)
@@ -277,13 +261,9 @@ async function groupAdditionRequestHandler(task: GroupAdditionRequestTask) {
     const validForSeconds = task.validForSeconds;
     const membershipDurationMinutes = task.membershipDurationMinutes;
 
-    let getObjectResponse = null;
+    let username = null;
     try {
-        const getObjectRequest: aws.S3.Types.GetObjectRequest = {
-            Bucket: DATA_STORE_BUCKET,
-            Key: `users/${slackUserId}/${accountId}`
-        };
-        getObjectResponse = await s3.getObject(getObjectRequest).promise();
+        username = (await dataStore.getObject(`users/${slackUserId}/${accountId}`)).trim();
     } catch (err) {
         const responseLines = [
             "We were unable to complete your request",
@@ -297,8 +277,6 @@ async function groupAdditionRequestHandler(task: GroupAdditionRequestTask) {
         }, task.responseUrl);
         return
     }
-
-    const username: Username = getObjectResponse.Body.toString().trim();
 
     const listGroupsRequest: ListGroupsRequest = {
         command: "listGroups"
@@ -336,12 +314,7 @@ async function groupAdditionRequestHandler(task: GroupAdditionRequestTask) {
         groupName: groupName,
         membershipDurationMinutes: membershipDurationMinutes
     };
-    const putObjectRequest: aws.S3.Types.PutObjectRequest = {
-        Body: JSON.stringify(groupAdditionRequest),
-        Bucket: DATA_STORE_BUCKET,
-        Key: `requests/${requestUuid}-${expiryTime}`
-    };
-    await s3.putObject(putObjectRequest).promise();
+    await dataStore.putObject(JSON.stringify(groupAdditionRequest),`requests/${requestUuid}-${expiryTime}`);
 
     const epoch = Math.floor(expiryTime / 1000);
     const responseLines = [
@@ -392,12 +365,7 @@ async function groupAdditionApprovalHandler(task: GroupAdditionApprovalTask) {
         return
     }
 
-    const getObjectRequest = {
-        Bucket: DATA_STORE_BUCKET,
-        Key: requestObject.Key
-    };
-    const getObjectResponse = await s3.getObject(getObjectRequest).promise();
-    const request: GroupAdditionRequest = JSON.parse(getObjectResponse.Body.toString());
+    const request: GroupAdditionRequest = JSON.parse(await dataStore.getObject(requestObject.Key));
 
     const expiryTime = new Date().getTime() + request.membershipDurationMinutes * 60 * 1000;
 
@@ -413,12 +381,7 @@ async function groupAdditionApprovalHandler(task: GroupAdditionApprovalTask) {
     }
 
     try {
-        const putRemovalObjectRequest: aws.S3.Types.PutObjectRequest = {
-            Body: JSON.stringify(request),
-            Bucket: DATA_STORE_BUCKET,
-            Key: `removals/${requestId}-${expiryTime}`
-        };
-        await s3.putObject(putRemovalObjectRequest).promise();
+        await dataStore.putObject(JSON.stringify(request), `removals/${requestId}-${expiryTime}`);
 
         const addUserToGroupRequest: AddUserToGroupRequest = {
             command: "addUserToGroup",
@@ -448,18 +411,9 @@ async function groupAdditionApprovalHandler(task: GroupAdditionApprovalTask) {
             approverSlackName: slackUserName,
             approverSlackId: slackUserId
         }, request);
-        const putApprovalObjectRequest: aws.S3.Types.PutObjectRequest = {
-            Body: JSON.stringify(approval),
-            Bucket: DATA_STORE_BUCKET,
-            Key: requestObject.Key.replace("requests","approvals")
-        };
-        await s3.putObject(putApprovalObjectRequest).promise();
+        await dataStore.putObject(JSON.stringify(approval), requestObject.Key.replace("requests","approvals"));
 
-        const deleteObjectRequest: aws.S3.Types.DeleteObjectRequest = {
-            Bucket: DATA_STORE_BUCKET,
-            Key: requestObject.Key
-        };
-        await s3.deleteObject(deleteObjectRequest).promise();
+        await dataStore.deleteObject(requestObject.Key);
     } catch (err) {
         console.error("An error occurred in setting a deletion object", err);
 
@@ -484,4 +438,77 @@ async function groupAdditionApprovalHandler(task: GroupAdditionApprovalTask) {
         text: responseLines.join("\n"),
         response_type: "in_channel"
     }, task.responseUrl);
+}
+
+async function resolveExpirations() {
+    await resolveExpiredGroupAdditions();
+    await resolveExpiredRequests();
+}
+
+async function resolveExpiredGroupAdditions() {
+    const listObjectsRequest: aws.S3.Types.ListObjectsRequest = {
+        Bucket: DATA_STORE_BUCKET,
+        Prefix: "removals/"
+    };
+    const listObjectsResponse = await s3.listObjects(listObjectsRequest).promise();
+    const removalObjects = listObjectsResponse.Contents;
+    debug && console.log("removalObjects", removalObjects);
+
+    const nowTime = new Date().getTime();
+    const expiredRemovalObjects = removalObjects.filter((removalObject) => {
+        const expiration = parseInt(removalObject.Key.substr(removalObject.Key.lastIndexOf("-") + 1));
+        debug && console.log("expiration", expiration);
+        return expiration <= nowTime;
+    });
+
+    for (let expiredRemovalObject of expiredRemovalObjects) {
+        const removal: GroupAdditionRequest = JSON.parse(await dataStore.getObject(expiredRemovalObject.Key));
+
+        try {
+            const removeUserFromGroupRequest: RemoveUserFromGroupRequest = {
+                command: "removeUserFromGroup",
+                userName: removal.userName,
+                groupName: removal.groupName
+            };
+            const lambdaResponse = await lambda.invoke({
+                FunctionName: `arn:aws:lambda:${REGION}:${removal.accountId}:function:${GROUP_BOT_PROJECT}-IamAgent`,
+                InvocationType: "RequestResponse",
+                Payload: JSON.stringify(removeUserFromGroupRequest)
+            }).promise();
+            const removeUserFromGroupResponse: RemoveUserFromGroupResponse = JSON.parse(lambdaResponse.Payload.toString());
+
+            if (removeUserFromGroupResponse.userRemovalSuccessful) {
+                await dataStore.deleteObject(expiredRemovalObject.Key);
+            }
+        } catch (err) {
+            console.error("An Error occurred processing a removal",removal,err);
+        }
+    }
+}
+
+async function resolveExpiredRequests() {
+    const listObjectsRequest: aws.S3.Types.ListObjectsRequest = {
+        Bucket: DATA_STORE_BUCKET,
+        Prefix: "requests/"
+    };
+    const listObjectsResponse = await s3.listObjects(listObjectsRequest).promise();
+    const requestObjects = listObjectsResponse.Contents;
+    debug && console.log("requestObjects", requestObjects);
+
+    const nowTime = new Date().getTime();
+    const expiredRequestObjects = requestObjects.filter((requestObject) => {
+        const expiration = parseInt(requestObject.Key.substr(requestObject.Key.lastIndexOf("-") + 1));
+        debug && console.log("expiration", expiration);
+        return expiration <= nowTime;
+    });
+
+    for (let expiredRequestObject of expiredRequestObjects) {
+        try {
+            await dataStore.copyObject(expiredRequestObject.Key, expiredRequestObject.Key.replace("requests","expired_requests"));
+
+            await dataStore.deleteObject(expiredRequestObject.Key);
+        } catch (err) {
+            console.error("An error occurred cleaning up expired request",expiredRequestObject,err);
+        }
+    }
 }

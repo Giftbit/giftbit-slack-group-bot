@@ -1,5 +1,5 @@
-
 export type Task = CallbackTask;
+
 
 export interface CallbackTask {
     command: string;

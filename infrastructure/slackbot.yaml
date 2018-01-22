@@ -99,7 +99,24 @@ Resources:
                 Resource:
                   - !Sub "arn:aws:s3:::${S3DataStore}"
                   - !Sub "arn:aws:s3:::${S3DataStore}/*"
-  SlackBotGroupListerInvokeAccess:
+  ScheduledBackgroundCleanupInvocationRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: Cleanup Invocation
+      ScheduleExpression: rate(1 minute)
+      State: ENABLED
+      Targets:
+        -
+          Arn: !GetAtt SlackBotBackgroundFunction.Arn
+          Id: SlackBotBackgroundCleanupTarget
+  SlackBotBackgroundCleanupInvokeAccess:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref SlackBotBackgroundFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt ScheduledBackgroundCleanupInvocationRule.Arn
+  SlackBotGroupBackgroundFunctionInvokeAccess:
     Type: AWS::Lambda::Permission
     Properties:
       Action: lambda:InvokeFunction

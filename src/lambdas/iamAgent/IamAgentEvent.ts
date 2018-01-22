@@ -1,6 +1,6 @@
-export type IamReaderRequest = ListGroupsRequest | GetUserIdRequest | AddUserToGroupRequest
+export type IamReaderRequest = ListGroupsRequest | GetUserIdRequest | AddUserToGroupRequest | RemoveUserFromGroupRequest
 
-export type IamReaderResponse = ListGroupsResponse | GetUserIdResponse | AddUserToGroupResponse
+export type IamReaderResponse = ListGroupsResponse | GetUserIdResponse | AddUserToGroupResponse | RemoveUserFromGroupResponse
 
 export interface ListGroupsRequest {
     command: "listGroups";
@@ -27,4 +27,14 @@ export interface AddUserToGroupRequest {
 
 export interface AddUserToGroupResponse {
     userAddSuccessful: boolean
+}
+
+export interface RemoveUserFromGroupRequest {
+    command: "removeUserFromGroup"
+    userName: string;
+    groupName: string;
+}
+
+export interface RemoveUserFromGroupResponse {
+    userRemovalSuccessful: boolean
 }

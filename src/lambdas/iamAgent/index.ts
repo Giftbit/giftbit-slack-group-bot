@@ -4,7 +4,7 @@ import * as aws from "aws-sdk";
 import {
     AddUserToGroupRequest, AddUserToGroupResponse,
     GetUserIdRequest, GetUserIdResponse, IamReaderRequest, IamReaderResponse, ListGroupsRequest,
-    ListGroupsResponse
+    ListGroupsResponse, RemoveUserFromGroupRequest, RemoveUserFromGroupResponse
 } from "./IamAgentEvent";
 
 const debug = true;
@@ -17,7 +17,8 @@ type IamTask = (request: IamReaderRequest) => Promise<IamReaderResponse>;
 const handlers: { [ key: string]: IamTask} = {
     listGroups: listGroupsHandler,
     getUserId: getUserIdHandler,
-    addUserToGroup: addUserToGroupHandler
+    addUserToGroup: addUserToGroupHandler,
+    removeUserFromGroup: removeUserFromGroupHandler,
 };
 
 export function handler(request: IamReaderRequest, context: awslambda.Context, callback: awslambda.Callback): void {
@@ -72,9 +73,26 @@ async function addUserToGroupHandler(request: AddUserToGroupRequest): Promise<Ad
         userAddSuccessful = true;
     }
     catch (err) {
-        console.error(`An error occurred adding user '${userName}' to group '${groupName}`);
+        console.error(`An error occurred adding user '${userName}' to group '${groupName}'`, err);
     }
     return {
         userAddSuccessful: userAddSuccessful
+    }
+}
+
+async function removeUserFromGroupHandler(request: RemoveUserFromGroupRequest): Promise<RemoveUserFromGroupResponse> {
+    const userName = request.userName;
+    const groupName = request.groupName;
+
+    let userRemovalSuccessful: boolean = false;
+
+    try {
+        await iam.removeUserFromGroup({UserName: userName, GroupName: groupName});
+        userRemovalSuccessful = true;
+    } catch (err) {
+        console.error(`An error occurred removing user '${userName}' from group '${groupName}'`, err)
+    }
+    return {
+        userRemovalSuccessful: userRemovalSuccessful
     }
 }
