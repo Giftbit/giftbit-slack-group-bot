@@ -195,57 +195,41 @@ Resources:
                       application/json: ""
                 requestTemplates:
                   application/x-www-form-urlencoded: |-
-                    ## From https://gist.github.com/199911/68a43f83fd933b1e3ac6
-                    ## convert HTML POST data or HTTP GET query string to JSON
+                    ## From https://github.com/jrstarke/aws-api-gateway-bodyparser/blob/master/aws-api-gateway-bodyparser.vtl
+                    ## Parses x-www-urlencoded data to JSON for AWS' API Gateway
+                    ##
+                    ## Author: Christian E Willman <christian@willman.io>
 
-                    ## get the raw post data from the AWS built-in variable and give it a nicer name
-                    #if ($context.httpMethod == "POST")
-                     #set($rawAPIData = $input.path("$"))
-                    #elseif ($context.httpMethod == "GET")
-                     #set($rawAPIData = $input.params().querystring)
-                     #set($rawAPIData = $rawAPIData.toString())
-                     #set($rawAPIDataLength = $rawAPIData.length() - 1)
-                     #set($rawAPIData = $rawAPIData.substring(1, $rawAPIDataLength))
-                     #set($rawAPIData = $rawAPIData.replace(", ", "&"))
+                    #if ( $context.httpMethod == "POST" )
+                      #set( $requestBody = $input.path('$') )
                     #else
-                     #set($rawAPIData = "")
+                      #set( $requestBody = "" )
                     #end
 
-                    ## first we get the number of "&" in the string, this tells us if there is more than one key value pair
-                    #set($countAmpersands = $rawAPIData.length() - $rawAPIData.replace("&", "").length())
+                    #set( $keyValuePairs = $requestBody.split("&") )
+                    #set( $params = [] )
 
-                    ## if there are no "&" at all then we have only one key value pair.
-                    ## we append an ampersand to the string so that we can tokenise it the same way as multiple kv pairs.
-                    ## the "empty" kv pair to the right of the ampersand will be ignored anyway.
-                    #if ($countAmpersands == 0)
-                     #set($rawPostData = $rawAPIData + "&")
-                    #end
+                    ## Filter empty key-value pairs
+                    #foreach( $kvp in $keyValuePairs )
+                      #set( $operands = $kvp.split("=") )
 
-                    ## now we tokenise using the ampersand(s)
-                    #set($tokenisedAmpersand = $rawAPIData.split("&"))
-
-                    ## we set up a variable to hold the valid key value pairs
-                    #set($tokenisedEquals = [])
-
-                    ## now we set up a loop to find the valid key value pairs, which must contain only one "="
-                    #foreach( $kvPair in $tokenisedAmpersand )
-                     #set($countEquals = $kvPair.length() - $kvPair.replace("=", "").length())
-                     #if ($countEquals == 1)
-                      #set($kvTokenised = $kvPair.split("="))
-                      #if ($kvTokenised[0].length() > 0)
-                       ## we found a valid key value pair. add it to the list.
-                       #set($devNull = $tokenisedEquals.add($kvPair))
+                      #if( $operands.size() == 1 || $operands.size() == 2 )
+                        #set( $success = $params.add($operands) )
                       #end
-                     #end
                     #end
 
-                    ## next we set up our loop inside the output structure "{" and "}"
                     {
-                    #foreach( $kvPair in $tokenisedEquals )
-                      ## finally we output the JSON for this pair and append a comma if this isn't the last pair
-                      #set($kvTokenised = $kvPair.split("="))
-                     "$util.urlDecode($kvTokenised[0])" : #if($kvTokenised[1].length() > 0)"$util.urlDecode($kvTokenised[1])"#{else}""#end#if( $foreach.hasNext ),#end
-                    #end
+                      #foreach( $param in $params )
+                        #set( $key = $util.urlDecode($param[0]) )
+
+                        #if( $param.size() > 1 && $param[1].length() > 0 )
+                          #set( $value = $util.urlDecode($param[1]) )
+                        #else
+                          #set( $value = "" )
+                        #end
+
+                        "$key": "$value"#if( $foreach.hasNext ),#end
+                      #end
                     }
         swagger: 2.0
   SlackBotFunctionRestApiPermission:
