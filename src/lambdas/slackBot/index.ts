@@ -1,7 +1,6 @@
 import "babel-polyfill";
 import * as awslambda from "aws-lambda";
 import * as aws from "aws-sdk";
-import * as uuid from "node-uuid";
 import {Message} from "./Message";
 import {
     ListGroupsTask, CreateRegistrationVerificationTask,
@@ -10,19 +9,16 @@ import {
 
 const debug = true;
 
-const ACCOUNT_ID =  process.env.ACCOUNT_ID;
 const ACCOUNTS: { [accountName: string]: string } = JSON.parse(process.env.ACCOUNTS);
 const TOKEN = process.env.TOKEN;
 const APPROVERS = process.env.APPROVERS || "";
 const SLACK_BOT_BACKGROUND_TASK_LAMBDA_ARN = process.env.SLACK_BOT_BACKGROUND_TASK_LAMBDA_ARN;
-const DATA_STORE_BUCKET = process.env.DATA_STORE_BUCKET;
 
 const REQUEST_VALID_MINUTES = 30;
 const MEMBERSHIP_DURATION_MINUTES = 60;
 
 type ActionHandler = (words: string[], message: Message) => Promise<any>;
 
-let dynamo = new aws.DynamoDB();
 let lambda = new aws.Lambda();
 
 const handlers: { [ key: string]: ActionHandler} = {
