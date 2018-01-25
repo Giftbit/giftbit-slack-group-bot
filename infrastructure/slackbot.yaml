@@ -12,36 +12,91 @@ Parameters:
     Type: String
     Description: The Slack Token that should be used to authenticate incoming requests
     NoEcho: true
+  RoleNameToGrantPolicyAccess:
+    Type: String
+    Description: The Name of a role to Grant Policy Access for the S3 Data Store (useful for CI)
+    Default: ""
+
+Conditions:
+  RoleNameToGrantPolicyAccessSet: !Not [!Equals [!Ref RoleNameToGrantPolicyAccess, ""]]
 
 Resources:
   S3DataStore:
     Type: AWS::S3::Bucket
-#  S3DataStorePolicy:
-#    Type: AWS::S3::BucketPolicy
-#    Properties:
-#      Bucket: !Ref S3DataStore
-#      PolicyDocument:
-#        Statement:
-#          -
-#            Effect: Allow
-#            Action:
-#              - s3:GetObject
-#            Resource:
-#              - !Sub "arn:aws:s3:::${S3DataStore}/verifications/*/${!aws:userName}/${!aws:userid}/*"
-#            Principal: "*"
-#            Condition:
-#              StringEquals:
-#                aws:principaltype: "User"
-#          -
-#            Effect: Deny
-#            Action:
-#              - s3:*
-#            NotResource:
-#              - !Sub "arn:aws:s3:::${S3DataStore}/verifications/*/${!aws:userName}/${!aws:userid}/*"
-#            Principal: "*"
-#            Condition:
-#              StringEquals:
-#                aws:principaltype: "User"
+  S3DataStorePolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref S3DataStore
+      PolicyDocument:
+        Statement:
+          -
+            Effect: Allow
+            Action:
+              - s3:GetObject
+            Resource:
+              - !Sub "arn:aws:s3:::${S3DataStore}/verifications/*/${!aws:username}/${!aws:userid}/*"
+            Principal: "*"
+            Condition:
+              StringEquals:
+                aws:principaltype:
+                  - User
+          -
+            Effect: Deny
+            Action:
+              - s3:*
+            NotResource:
+              - !Sub "arn:aws:s3:::${S3DataStore}/verifications/*/${!aws:username}/${!aws:userid}/*"
+            Principal: "*"
+            Condition:
+              StringEquals:
+                aws:principaltype:
+                  - User
+          -
+            Effect: Deny
+            Action:
+              - s3:*
+            Resource:
+              - !Sub "arn:aws:s3:::${S3DataStore}/*"
+              - !Sub "arn:aws:s3:::${S3DataStore}"
+            Principal: "*"
+            Condition:
+              StringEquals:
+                aws:principaltype: FederatedUser
+          - !If
+            - RoleNameToGrantPolicyAccessSet
+            -
+              Effect: Deny
+              NotAction:
+                - s3:PutBucketPolicy
+                - s3:GetBucketPolicy
+                - s3:DeleteBucketPolicy
+              Resource:
+                - !Sub "arn:aws:s3:::${S3DataStore}/*"
+                - !Sub "arn:aws:s3:::${S3DataStore}"
+              Principal: "*"
+              Condition:
+                StringLike:
+                  aws:userid: !Ref PolicyAccessRoleId
+            - !Ref AWS::NoValue
+          -
+            Effect: Deny
+            Action:
+              - s3:*
+            Principal: "*"
+            Resource:
+              - !Sub "arn:aws:s3:::${S3DataStore}/*"
+              - !Sub "arn:aws:s3:::${S3DataStore}"
+            Condition:
+              StringNotLike:
+                aws:userid:
+                  - !Ref SlackBotRoleIds
+                  - !If
+                    - RoleNameToGrantPolicyAccessSet
+                    - !Ref PolicyAccessRoleId
+                    - !Ref AWS::NoValue
+              StringEquals:
+                aws:principaltype: AssumeRole
+
   SlackBotRoleIds:
     Type: AWS::CloudFormation::CustomResource
     Version: 1.0
@@ -52,6 +107,12 @@ Resources:
         -
           - !Ref SlackBotBackgroundRole
           - !Ref SlackBotRole
+  PolicyAccessRoleId:
+    Type: AWS::CloudFormation::CustomResource
+    Condition: RoleNameToGrantPolicyAccessSet
+    Properties:
+      ServiceToken: !GetAtt RoleLookupLambda.Arn
+      RoleNames: !Ref RoleNameToGrantPolicyAccess
 
   SlackBotBackgroundFunction:
     Type: AWS::Lambda::Function

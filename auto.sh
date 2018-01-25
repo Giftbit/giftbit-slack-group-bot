@@ -1,4 +1,5 @@
-#!/usr/bin/env bash
+#!/bin/bash
+
 
 # A few bash commands to make development against dev environment easy.
 # Set the properties below to sensible values for your project.
@@ -8,16 +9,14 @@
 STACK_NAME="SlackGroupBot"
 
 # The name of an S3 bucket on your account to hold deployment artifacts.
+#BUILD_ARTIFACT_BUCKET=""
 BUILD_ARTIFACT_BUCKET="dev-lightraildevartifacts-ywjp7wt8djk7-bucket-1mlnqtwvk2jzf"
 
 # Parameter values for the sam template.  see: `aws cloudformation deploy help`
 #PARAMETER_OVERRIDES=""
-PARAMETER_OVERRIDES='--parameter-overrides GroupBotProject=Groot Accounts={"dev":"757264843183"} SlackToken=Jsy6HbHkV3ph7VQjuebXOQEA'
+PARAMETER_OVERRIDES='--parameter-overrides GroupBotProject=Groot Accounts={"dev":"757264843183"} SlackToken=Jsy6HbHkV3ph7VQjuebXOQEA RoleNameToGrantPolicyAccess=InfrastructureAdmin'
 
 USAGE="usage: $0 <command name>\nvalid command names: build delete deploy invoke upload"
-
-
-set -eu
 
 if ! type "aws" &> /dev/null; then
     echo "'aws' was not found in the path.  Install awscli and try again."
@@ -27,8 +26,17 @@ fi
 if [ $# -lt 1 ]; then
     echo "Error: expected a command."
     echo -e $USAGE
-    exit 1
+    exit 2
 fi
+
+if [ -z "$BUILD_ARTIFACT_BUCKET" ]; then
+    echo "The BUILD_ARTIFACT_BUCKET property was not set. This is the name of the \
+S3 bucket that will back the Packaged Resources, and should be in the same region you would like to host the \
+lambdas in."
+    exit 3
+fi
+
+set -eu
 
 COMMAND="$1"
 
@@ -50,11 +58,23 @@ if [ "$COMMAND" = "build" ]; then
 elif [ "$COMMAND" = "delete" ]; then
     aws cloudformation delete-stack --stack-name $STACK_NAME
 
-elif [ "$COMMAND" = "deploy" ]; then
+elif [ "$COMMAND" = "package" ]; then
+    set +u
     TEMPLATE="$2"
     if [ -z "$TEMPLATE" ]; then
-        TEMPLATE=sam
+        TEMPLATE=slackbot
     fi
+    set -u
+
+
+
+elif [ "$COMMAND" = "deploy" ]; then
+    set +u
+    TEMPLATE="$2"
+    if [ -z "$TEMPLATE" ]; then
+        TEMPLATE=slackbot
+    fi
+    set -u
 
     # Deploy all code and update the CloudFormation stack.
     # eg: ./dev.sh deploy
@@ -78,6 +98,8 @@ elif [ "$COMMAND" = "deploy" ]; then
 
     # cleanup
     rm "$OUTPUT_TEMPLATE_FILE"
+
+
 
 elif [ "$COMMAND" = "invoke" ]; then
     # Invoke a lambda function.
