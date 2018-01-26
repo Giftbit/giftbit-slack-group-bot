@@ -12,6 +12,7 @@ Parameters:
     Type: String
     Description: The Slack Token that should be used to authenticate incoming requests
     NoEcho: true
+    Default: ""
   RoleNameToGrantPolicyAccess:
     Type: String
     Description: The Name of a role to Grant Policy Access for the S3 Data Store (useful for CI)
@@ -357,3 +358,6 @@ Outputs:
   GroupBotSlackBotAccount:
     Description: The Account ID that contains the Slack Bot, As it should be provided to the IAM Agent
     Value: !Ref AWS::AccountId
+  WebhookUrl:
+    Description: The Webhook URL to give Slack
+    Value: !Sub "https://${RestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/webhook"

@@ -74,7 +74,7 @@ elif [ "$COMMAND" = "package" ]; then
     aws cloudformation package --template-file infrastructure/slackbot.yaml --s3-bucket $BUILD_ARTIFACT_BUCKET --output-template-file /tmp/$SLACK_BOT_TEMPLATE_NAME
     aws s3 cp /tmp/$SLACK_BOT_TEMPLATE_NAME s3://$BUILD_ARTIFACT_BUCKET/cloudformation/$SLACK_BOT_TEMPLATE_NAME
 
-    aws cloudformation package --template-file infrastructure/slackbot.yaml --s3-bucket $BUILD_ARTIFACT_BUCKET --output-template-file /tmp/$IAM_AGENT_TEMPLATE_NAME
+    aws cloudformation package --template-file infrastructure/iam-agent.yaml --s3-bucket $BUILD_ARTIFACT_BUCKET --output-template-file /tmp/$IAM_AGENT_TEMPLATE_NAME
     aws s3 cp /tmp/$IAM_AGENT_TEMPLATE_NAME s3://$BUILD_ARTIFACT_BUCKET/cloudformation/$IAM_AGENT_TEMPLATE_NAME
 
     echo ""
