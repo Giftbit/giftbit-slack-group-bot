@@ -1,4 +1,6 @@
-# giftbit-slack-group-bot
+# slack-iam-group-bot
 
-This bot makes granting short term group access easy
+Granting temporary IAM Group access, made easy
+
+
 

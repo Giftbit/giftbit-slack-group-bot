@@ -305,13 +305,14 @@ Resources:
     Properties:
       RestApiId: !Ref RestApi
       StageName: Prod
-  AccountDependencies:
+  IamAgent:
     Type: AWS::CloudFormation::Stack
+    DependsOn: SlackBotRole
     Properties:
-      TemplateURL: ./account-res.yaml
+      TemplateURL: ./iam-agent.yaml
       Parameters:
         GroupBotProject: !Ref GroupBotProject
-        GroupBotSlackHandlerAccount: !Ref AWS::AccountId
+        GroupBotSlackBotAccount: !Ref AWS::AccountId
 
   RoleLookupRole:
     Type: AWS::IAM::Role
@@ -348,3 +349,11 @@ Resources:
       Runtime: nodejs6.10
       Timeout: 15
       Code: ../res/role-id-lookup.zip
+
+Outputs:
+  GroupBotProject:
+    Description: The GroupBotProject name, As it should be provided to the IAM Agent
+    Value: !Ref GroupBotProject
+  GroupBotSlackBotAccount:
+    Description: The Account ID that contains the Slack Bot, As it should be provided to the IAM Agent
+    Value: !Ref AWS::AccountId

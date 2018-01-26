@@ -1,5 +1,5 @@
 {
-  "name": "",
+  "name": "slack-iam-group-bot",
   "version": "0.1.0",
   "description": "A Slack bot for managing temporary group access.",
   "scripts": {
