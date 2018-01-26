@@ -161,6 +161,12 @@ Resources:
                 Resource:
                   - !Sub "arn:aws:s3:::${S3DataStore}"
                   - !Sub "arn:aws:s3:::${S3DataStore}/*"
+              -
+                Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource:
+                  - !Sub "arn:aws:lambda:${AWS::Region}:*:function:${GroupBotProject}-IamAgent"
   ScheduledBackgroundCleanupInvocationRule:
     Type: AWS::Events::Rule
     Properties:

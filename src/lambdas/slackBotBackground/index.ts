@@ -86,9 +86,18 @@ async function listGroupsHandler(task: ListGroupsTask) {
 
     let responseLines: string[] = [];
     for (let accountGroupsRequest of accountGroupsRequests) {
-        let lambdaResponse = await accountGroupsRequest.lambdaPromise;
 
-        if (lambdaResponse.FunctionError) {
+        let lambdaResponse = null;
+        try {
+            lambdaResponse = await accountGroupsRequest.lambdaPromise;
+        } catch (err) {
+            console.error(`An Exception occurred in querying the groups from ${accountGroupsRequest.accountName}`,err);
+        }
+
+        if (!lambdaResponse) {
+            console.log(`Lambda response for ${accountGroupsRequest.accountName} was not set`);
+        }
+        else if (lambdaResponse.FunctionError) {
             console.log(`An error occurred fetching the groups from ${accountGroupsRequest.accountName}`,lambdaResponse.FunctionError);
         } else {
             const getGroupsResponse: ListGroupsResponse = JSON.parse(lambdaResponse.Payload.toString());
